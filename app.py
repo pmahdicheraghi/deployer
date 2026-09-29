@@ -20,6 +20,114 @@ ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 LE_VOL = os.environ.get("LE_VOLUME", "deployer_letsencrypt")
 WWW_VOL = os.environ.get("WWW_VOLUME", "deployer_certbot-www")
 
+GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "").strip()
+GITHUB_APP_SLUG = os.environ.get("GITHUB_APP_SLUG", "").strip()
+GITHUB_PRIVATE_KEY_PATH = os.environ.get("GITHUB_PRIVATE_KEY_PATH", f"{DATA}/github-app.pem")
+GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()
+
+_token_cache = {}
+
+def get_github_private_key():
+    if os.environ.get("GITHUB_PRIVATE_KEY"):
+        return os.environ["GITHUB_PRIVATE_KEY"].strip()
+    if GITHUB_PRIVATE_KEY_PATH and os.path.exists(GITHUB_PRIVATE_KEY_PATH):
+        try:
+            with open(GITHUB_PRIVATE_KEY_PATH, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            return None
+    return None
+
+def get_github_jwt():
+    key = get_github_private_key()
+    if not key or not GITHUB_APP_ID:
+        return None
+    try:
+        import jwt
+        now = int(time.time())
+        payload = {
+            "iat": now - 60,
+            "exp": now + 600,
+            "iss": int(GITHUB_APP_ID) if GITHUB_APP_ID.isdigit() else GITHUB_APP_ID,
+        }
+        return jwt.encode(payload, key, algorithm="RS256")
+    except Exception as e:
+        print(f"Failed to generate GitHub JWT: {e}", flush=True)
+        return None
+
+def get_installation_token(installation_id):
+    if not installation_id:
+        return None
+    now = int(time.time())
+    cached = _token_cache.get(str(installation_id))
+    if cached and cached[1] > now + 60:
+        return cached[0]
+    jwt_tok = get_github_jwt()
+    if not jwt_tok:
+        return None
+    import urllib.request
+    url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+    req = urllib.request.Request(
+        url,
+        data=b"{}",
+        headers={
+            "Authorization": f"Bearer {jwt_tok}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "Deployer",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            tok = data.get("token")
+            if tok:
+                _token_cache[str(installation_id)] = (tok, now + 3500)
+                return tok
+    except Exception as e:
+        print(f"Failed to get installation token for {installation_id}: {e}", flush=True)
+    return None
+
+def list_installation_repos(installation_id):
+    tok = get_installation_token(installation_id)
+    if not tok:
+        return []
+    import urllib.request
+    url = "https://api.github.com/installation/repositories?per_page=100"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {tok}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "Deployer",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            repos = []
+            for r in data.get("repositories", []):
+                repos.append({
+                    "name": r.get("name"),
+                    "full_name": r.get("full_name"),
+                    "clone_url": r.get("clone_url"),
+                    "default_branch": r.get("default_branch", "main"),
+                    "private": r.get("private", False),
+                    "installation_id": str(installation_id),
+                })
+            return repos
+    except Exception as e:
+        print(f"Failed to list installation repos for {installation_id}: {e}", flush=True)
+        return []
+
+def get_all_github_repos():
+    s = load()
+    insts = s.get("_github_installations", {})
+    all_repos = []
+    for inst_id in insts.keys():
+        all_repos.extend(list_installation_repos(inst_id))
+    return all_repos
+
 def normalize_domain(d):
     d = (d or "").strip().lower()
     if d and "." not in d and BASE_DOMAIN:
@@ -141,6 +249,11 @@ def parse_env(text):
 
 def auth_url(a):
     u = a["repo_url"]
+    inst_id = a.get("installation_id")
+    if inst_id:
+        tok = get_installation_token(inst_id)
+        if tok:
+            return u.replace("https://", f"https://x-access-token:{tok}@", 1)
     if a.get("token"):
         user = "oauth2" if a["provider"] == "gitlab" else "x-access-token"
         u = u.replace("https://", f"https://{user}:{quote(a['token'], safe='')}@", 1)
@@ -263,22 +376,27 @@ def validate(f, existing=None):
 @app.route("/")
 @login_required
 def index():
-    apps = sorted(load().values(), key=lambda a: a["name"])
+    apps = sorted([a for a in load().values() if isinstance(a, dict) and "name" in a and not a["name"].startswith("_")], key=lambda a: a["name"])
     for a in apps: a["live"] = live_status(a)
     return render_template("index.html", apps=apps)
 
 @app.route("/apps/new", methods=["GET", "POST"])
 @login_required
 def new():
+    github_repos = get_all_github_repos() if (GITHUB_APP_ID or GITHUB_APP_SLUG) else []
     if request.method == "POST":
         f = dict(request.form)
         f["domain"] = normalize_domain(f.get("domain", ""))
         err = validate(f)
         if err:
             flash(err)
-            return render_template("form.html", app=f, editing=False, base_domain=BASE_DOMAIN)
+            return render_template("form.html", app=f, editing=False, base_domain=BASE_DOMAIN,
+                                   github_app_slug=GITHUB_APP_SLUG, has_github_app=bool(GITHUB_APP_ID or GITHUB_APP_SLUG),
+                                   github_repos=github_repos)
         name = f["name"].strip().lower()
-        a = dict(name=name, provider=f["provider"], repo_url=f["repo_url"].strip(), token=f.get("token", "").strip(),
+        a = dict(name=name, provider=f["provider"], repo_url=f["repo_url"].strip(),
+                 token=f.get("token", "").strip(),
+                 installation_id=f.get("installation_id", "").strip(),
                  branch=f.get("branch", "main").strip() or "main", domain=f["domain"],
                  port=int(f["port"]), env=f.get("env", ""), secret=secrets.token_hex(16),
                  status="new", sha="", deployed_at=0)
@@ -286,19 +404,24 @@ def new():
             s = load(); s[name] = a; save(s)
         start_deploy(name)
         return redirect(url_for("detail", name=name))
-    return render_template("form.html", app={"branch": "main", "port": 80, "provider": "github"}, editing=False, base_domain=BASE_DOMAIN)
+    return render_template("form.html", app={"branch": "main", "port": 80, "provider": "github"}, editing=False, base_domain=BASE_DOMAIN,
+                           github_app_slug=GITHUB_APP_SLUG, has_github_app=bool(GITHUB_APP_ID or GITHUB_APP_SLUG),
+                           github_repos=github_repos)
 
 @app.route("/apps/<name>/edit", methods=["GET", "POST"])
 @login_required
 def edit(name):
     a = get_app(name)
+    github_repos = get_all_github_repos() if (GITHUB_APP_ID or GITHUB_APP_SLUG) else []
     if request.method == "POST":
         f = dict(request.form)
         f["domain"] = normalize_domain(f.get("domain", ""))
         err = validate(f, existing=name)
         if err:
             flash(err)
-            return render_template("form.html", app={**a, **f}, editing=True, base_domain=BASE_DOMAIN)
+            return render_template("form.html", app={**a, **f}, editing=True, base_domain=BASE_DOMAIN,
+                                   github_app_slug=GITHUB_APP_SLUG, has_github_app=bool(GITHUB_APP_ID or GITHUB_APP_SLUG),
+                                   github_repos=github_repos)
         new_domain = f["domain"]
         if new_domain != a["domain"]:
             remove_vhost(a["domain"])
@@ -306,10 +429,32 @@ def edit(name):
                    domain=new_domain, port=int(f["port"]), env=f.get("env", ""))
         if f.get("token", "").strip():
             upd["token"] = f["token"].strip()
+        if "installation_id" in f:
+            upd["installation_id"] = f["installation_id"].strip()
         update(name, **upd)
         flash("Saved. Click Deploy to apply.")
         return redirect(url_for("detail", name=name))
-    return render_template("form.html", app=a, editing=True, base_domain=BASE_DOMAIN)
+    return render_template("form.html", app=a, editing=True, base_domain=BASE_DOMAIN,
+                           github_app_slug=GITHUB_APP_SLUG, has_github_app=bool(GITHUB_APP_ID or GITHUB_APP_SLUG),
+                           github_repos=github_repos)
+
+@app.route("/github/setup")
+@login_required
+def github_setup():
+    inst_id = request.args.get("installation_id")
+    if inst_id:
+        with slock:
+            s = load()
+            insts = s.setdefault("_github_installations", {})
+            insts[str(inst_id)] = {"installed_at": int(time.time())}
+            save(s)
+        flash("GitHub App connected successfully!")
+    return redirect(url_for("new"))
+
+@app.route("/github/repos")
+@login_required
+def github_repos():
+    return jsonify(repos=get_all_github_repos())
 
 @app.route("/apps/<name>")
 @login_required
@@ -362,6 +507,58 @@ def webhook(name):
         return {"status": "ignored", "ref": ref}, 200
     start_deploy(name)
     return {"status": "deploying"}, 202
+
+@app.post("/github/webhook")
+def github_webhook():
+    sig = request.headers.get("X-Hub-Signature-256")
+    event = request.headers.get("X-GitHub-Event", "")
+    secret = GITHUB_WEBHOOK_SECRET
+    if secret:
+        if not sig:
+            abort(401)
+        exp = "sha256=" + hmac.new(secret.encode(), request.get_data(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, exp):
+            abort(401)
+
+    if event == "ping":
+        return {"status": "pong"}, 200
+
+    if event == "installation":
+        data = request.get_json(silent=True) or {}
+        action = data.get("action")
+        inst_id = str((data.get("installation") or {}).get("id") or "")
+        if inst_id:
+            with slock:
+                s = load()
+                insts = s.setdefault("_github_installations", {})
+                if action == "deleted":
+                    insts.pop(inst_id, None)
+                else:
+                    insts[inst_id] = {"installed_at": int(time.time())}
+                save(s)
+        return {"status": "ok"}, 200
+
+    if event == "push":
+        data = request.get_json(silent=True) or {}
+        ref = data.get("ref", "")
+        repo = data.get("repository") or {}
+        clone_url = repo.get("clone_url", "").lower().rstrip(".git")
+        full_name = repo.get("full_name", "").lower()
+        matched = []
+        with slock:
+            apps = load()
+        for aname, a in apps.items():
+            if aname.startswith("_"):
+                continue
+            if ref != f"refs/heads/{a.get('branch', 'main')}":
+                continue
+            app_repo = a.get("repo_url", "").lower().rstrip(".git")
+            if app_repo == clone_url or (full_name and full_name in app_repo):
+                matched.append(aname)
+                start_deploy(aname)
+        return {"status": "deploying" if matched else "ignored", "matched": matched}, 200
+
+    return {"status": "ignored", "event": event}, 200
 
 
 # ---------- bootstrap: put the panel itself behind nginx + TLS ----------

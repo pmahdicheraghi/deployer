@@ -2,6 +2,28 @@
 <h2>{{ 'Edit ' ~ app.name if editing else 'New app' }}</h2>
 <form method="post" class="card">
 {% if not editing %}<label>Name</label><input name="name" value="{{ app.name or '' }}" placeholder="myapp" required>{% endif %}
+<input type="hidden" name="installation_id" id="installation_id" value="{{ app.installation_id or '' }}">
+{% if has_github_app and not editing %}
+  {% if github_repos %}
+  <label>GitHub Repository <small class="mut">(auto-fills URL, branch, and token)</small></label>
+  <select id="repo_select" onchange="pickRepo(this)">
+    <option value="">-- Choose a repository --</option>
+    {% for r in github_repos %}
+    <option value="{{ r.clone_url }}" data-name="{{ r.name }}" data-branch="{{ r.default_branch }}" data-inst="{{ r.installation_id }}">
+      {{ r.full_name }} {{ '🔒' if r.private else '' }}
+    </option>
+    {% endfor %}
+  </select>
+  {% if github_app_slug %}
+  <small style="display:block;margin-top:4px"><a href="https://github.com/apps/{{ github_app_slug }}/installations/new" target="_blank">+ Add or grant access to more repositories on GitHub</a></small>
+  {% endif %}
+  {% elif github_app_slug %}
+  <div style="margin:8px 0 12px;padding:10px 14px;background:var(--card);border:1px dashed var(--bd);border-radius:6px;display:flex;align-items:center;justify-content:space-between">
+    <span>Connect your GitHub account for zero-effort repository picking & auto-deploy:</span>
+    <a class="btn ghost" href="https://github.com/apps/{{ github_app_slug }}/installations/new" target="_blank">Connect GitHub</a>
+  </div>
+  {% endif %}
+{% endif %}
 <div class="row"><div><label>Provider</label>
 <select name="provider"><option value="github" {{ 'selected' if app.provider=='github' }}>GitHub</option>
 <option value="gitlab" {{ 'selected' if app.provider=='gitlab' }}>GitLab</option></select></div>
@@ -24,4 +46,25 @@
 <textarea name="env" rows="5">{{ app.env or '' }}</textarea>
 <p><button class="btn">{{ 'Save' if editing else 'Create & deploy' }}</button>
 <a class="btn ghost" href="/">Cancel</a></p></form>
+<script>
+function pickRepo(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) return;
+  const repoUrl = document.querySelector('input[name="repo_url"]');
+  const branch = document.querySelector('input[name="branch"]');
+  const nameInput = document.querySelector('input[name="name"]');
+  const instInput = document.getElementById('installation_id');
+  const tokenInput = document.querySelector('input[name="token"]');
+  const provider = document.querySelector('select[name="provider"]');
+
+  if (repoUrl) repoUrl.value = opt.value;
+  if (branch && opt.dataset.branch) branch.value = opt.dataset.branch;
+  if (nameInput && !nameInput.value && opt.dataset.name) {
+    nameInput.value = opt.dataset.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30);
+  }
+  if (instInput && opt.dataset.inst) instInput.value = opt.dataset.inst;
+  if (tokenInput) tokenInput.value = '';
+  if (provider) provider.value = 'github';
+}
+</script>
 {% endblock %}

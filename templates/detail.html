@@ -8,17 +8,54 @@
 <div class="card" style="margin-top:16px">
 <p><b>URL:</b> <a href="https://{{ app.domain }}" target="_blank">https://{{ app.domain }}</a></p>
 <p><b>Repo:</b> {{ app.repo_url }} <span class="mut">({{ app.branch }})</span></p>
+{% if app.installation_id %}
+<p><b>Auto-deploy:</b> <span class="badge running">GitHub App connected (auto-deploys on push)</span></p>
+{% else %}
 <p><b>Webhook URL:</b> <code>{{ webhook }}</code></p>
 <p><b>Webhook secret:</b> <code>{{ app.secret }}</code></p>
 <small>{% if app.provider == 'github' %}GitHub → Settings → Webhooks: content type <code>application/json</code>, paste the secret, "Just the push event".
 {% else %}GitLab → Settings → Webhooks: paste the secret as "Secret token", enable "Push events".{% endif %}</small>
+{% endif %}
 </div>
 <h3>Deploy log</h3><pre id="log">loading…</pre>
 <script>
 const name={{ app.name|tojson }}, wasDeploying={{ 'true' if status=='deploying' else 'false' }};
+function ansiToHtml(str) {
+  if (!str) return '';
+  let s = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  s = s.replace(/[^\n]*\r(?!\n)/g, '');
+  const colors = {
+    '30': '#4b5563', '31': '#ef4444', '32': '#22c55e', '33': '#eab308',
+    '34': '#3b82f6', '35': '#a855f7', '36': '#06b6d4', '37': '#e5e7eb',
+    '90': '#9ca3af', '91': '#f87171', '92': '#4ade80', '93': '#facc15',
+    '94': '#60a5fa', '95': '#c084fc', '96': '#38bdf8', '97': '#ffffff'
+  };
+  let open = false;
+  s = s.replace(/(?:\x1b|\u001b)\[([0-9;]*)m/g, (match, seq) => {
+    if (!seq || seq === '0') {
+      if (open) { open = false; return '</span>'; }
+      return '';
+    }
+    for (const code of seq.split(';')) {
+      if (colors[code]) {
+        const tag = (open ? '</span>' : '') + `<span style="color:${colors[code]}">`;
+        open = true;
+        return tag;
+      }
+      if (code === '1') {
+        const tag = (open ? '</span>' : '') + '<span style="font-weight:600">';
+        open = true;
+        return tag;
+      }
+    }
+    return '';
+  });
+  if (open) s += '</span>';
+  return s.replace(/(?:\x1b|\u001b)\[[0-9;]*[a-zA-Z]/g, '');
+}
 async function poll(){
   const d=await (await fetch(`/apps/${name}/log.json`)).json();
-  const el=document.getElementById('log'); el.textContent=d.log; el.scrollTop=el.scrollHeight;
+  const el=document.getElementById('log'); el.innerHTML=ansiToHtml(d.log); el.scrollTop=el.scrollHeight;
   if(d.status==='deploying') setTimeout(poll,2000); else if(wasDeploying) location.reload();
 }
 poll();
