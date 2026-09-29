@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<div class="bar"><h2 style="margin:0">{{ app.name }} <span id="st" class="badge {{ status }}">{{ status }}</span></h2>
+<div class="bar"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">{{ app.name }}</h2> <span id="st" class="badge {{ status }}">{{ status }}</span> <span id="stats" class="badge" style="display:none;font-weight:normal"></span></div>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 <form method="post" action="/apps/{{ app.name }}/deploy" class="inline"><button class="btn">Deploy now</button></form>
 <form method="post" action="/apps/{{ app.name }}/restart" class="inline"><button class="btn ghost">Restart</button></form>
@@ -68,5 +68,26 @@ async function poll(){
   if(d.status==='deploying') setTimeout(poll,2000); else if(wasDeploying) location.reload();
 }
 poll();
+
+async function pollStats(){
+  const badge = document.getElementById('st');
+  const st = badge ? badge.textContent.trim() : '';
+  const el = document.getElementById('stats');
+  if(st === 'running' || st === 'no-tls'){
+    try {
+      const res = await fetch(`/apps/${name}/stats.json`);
+      const data = await res.json();
+      if(el && data.stats && data.stats.cpu){
+        const perc = data.stats.mem_perc ? ` (${data.stats.mem_perc})` : '';
+        el.textContent = `⚡ ${data.stats.cpu} CPU · 💾 ${data.stats.mem}${perc}`;
+        el.style.display = '';
+      }
+    } catch(e){}
+  } else {
+    if(el) el.style.display = 'none';
+  }
+  setTimeout(pollStats, 4000);
+}
+pollStats();
 </script>
 {% endblock %}

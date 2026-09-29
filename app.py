@@ -279,6 +279,21 @@ def live_status(a):
     st = r.stdout.strip() if r.returncode == 0 else "missing"
     return a["status"] if (st == "running" and a["status"] == "no-tls") else st
 
+def container_stats(name):
+    try:
+        r = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{json .}}", f"{APP_PREFIX}-{name}"],
+                           capture_output=True, text=True, timeout=3)
+        if r.returncode == 0 and r.stdout.strip():
+            d = json.loads(r.stdout.strip())
+            return {
+                "cpu": d.get("CPUPerc", "0%"),
+                "mem": d.get("MemUsage", ""),
+                "mem_perc": d.get("MemPerc", "0%")
+            }
+    except Exception:
+        pass
+    return None
+
 
 # ---------- auth ----------
 def login_required(f):
@@ -522,6 +537,12 @@ def delete(name):
 def log_json(name):
     a = get_app_or_404(name)
     return jsonify(status=live_status(a), log=read_log(name))
+
+@app.get("/apps/<name>/stats.json")
+@login_required
+def stats_json(name):
+    get_app_or_404(name)
+    return jsonify(stats=container_stats(name))
 
 
 # ---------- webhooks ----------
