@@ -1,11 +1,12 @@
 {% extends "base.html" %}{% block body %}
 <div class="bar"><h2 style="margin:0">Apps</h2><a class="btn" href="/apps/new">+ New app</a></div>
+<p class="mut">Apps deploy as subdomains of <code>{{ base_domain }}</code>.</p>
 {% if apps %}
-<table style="margin-top:12px"><tr><th>Name</th><th>Domain</th><th>Branch</th><th>Status</th><th>Commit</th><th>Deployed</th><th></th></tr>
+<table style="margin-top:12px"><tr><th>Name</th><th>Domain</th><th>Source</th><th>Status</th><th>Commit</th><th>Deployed</th><th></th></tr>
 {% for a in apps %}<tr>
 <td><a href="/apps/{{ a.name }}"><b>{{ a.name }}</b></a></td>
 <td><a href="https://{{ a.domain }}" target="_blank">{{ a.domain }}</a></td>
-<td>{{ a.branch }}</td>
+<td>{% if a.method == 'github_app' %}{{ a.repo_full_name }}{% else %}{{ a.provider }} · manual{% endif %} <span class="mut">({{ a.branch }})</span></td>
 <td><span class="badge {{ a.live }}">{{ a.live }}</span></td>
 <td><code>{{ a.sha or '-' }}</code></td>
 <td class="mut">{{ a.deployed_at | int | timestamp if a.deployed_at else '-' }}</td>

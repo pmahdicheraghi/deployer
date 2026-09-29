@@ -28,14 +28,13 @@ services:
     restart: unless-stopped
     env_file: .env
     depends_on: [nginx]
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - nginx-conf:/etc/nginx/conf.d
       - letsencrypt:/etc/letsencrypt:ro
       - data:/data
+      # GitHub App private key you downloaded from the app settings page
+      - ./github-app-private-key.pem:/secrets/github-app-private-key.pem:ro
     networks: [web]
 
 networks:
@@ -46,6 +45,6 @@ volumes:
   nginx-conf:
   data:
   letsencrypt:
-    name: ${LE_VOLUME:-deployer_letsencrypt}
+    name: deployer_letsencrypt
   certbot-www:
-    name: ${WWW_VOLUME:-deployer_certbot-www}
+    name: deployer_certbot-www
