@@ -1,4 +1,4 @@
-name: minipaas
+name: deployer
 
 services:
   nginx:
@@ -43,6 +43,6 @@ volumes:
   nginx-conf:
   data:
   letsencrypt:
-    name: minipaas_letsencrypt
+    name: ${LE_VOLUME:-deployer_letsencrypt}
   certbot-www:
-    name: minipaas_certbot-www
+    name: ${WWW_VOLUME:-deployer_certbot-www}

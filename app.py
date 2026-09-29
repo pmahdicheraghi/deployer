@@ -1,4 +1,4 @@
-"""MiniPaaS: push-to-deploy panel (GitHub/GitLab -> docker build -> nginx + Let's Encrypt)."""
+"""Deployer: push-to-deploy panel (GitHub/GitLab -> docker build -> nginx + Let's Encrypt)."""
 import hashlib, hmac, json, os, re, secrets, shutil, subprocess, sys, threading, time
 from functools import wraps
 from urllib.parse import quote
@@ -12,8 +12,8 @@ NETWORK = os.environ.get("DOCKER_NETWORK", "web")
 PANEL_DOMAIN = os.environ.get("PANEL_DOMAIN", "")
 ACME_EMAIL = os.environ["ACME_EMAIL"]
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
-LE_VOL = os.environ.get("LE_VOLUME", "minipaas_letsencrypt")
-WWW_VOL = os.environ.get("WWW_VOLUME", "minipaas_certbot-www")
+LE_VOL = os.environ.get("LE_VOLUME", "deployer_letsencrypt")
+WWW_VOL = os.environ.get("WWW_VOLUME", "deployer_certbot-www")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or hashlib.sha256(("k" + ADMIN_PASSWORD).encode()).hexdigest()
@@ -145,7 +145,7 @@ def deploy(name):
         update(name, status="deploying")
         with open(logpath(name), "w") as lf:
             try:
-                path, container = f"{DATA}/repos/{name}", f"minipaas-{name}"
+                path, container = f"{DATA}/repos/{name}", f"deployer-{name}"
                 hide = [a["token"]] if a.get("token") else []
                 url = auth_url(a)
                 if os.path.isdir(path + "/.git"):
@@ -160,6 +160,7 @@ def deploy(name):
                 image = f"{container}:{sha}"
                 sh(["docker", "build", "-t", image, path], lf)
                 sh(["docker", "rm", "-f", container], lf, check=False)
+                sh(["docker", "rm", "-f", f"minipaas-{name}"], lf, check=False)
                 cmd = ["docker", "run", "-d", "--name", container, "--restart", "unless-stopped",
                        "--network", NETWORK]
                 for k, v in parse_env(a.get("env")).items():
@@ -187,8 +188,13 @@ def start_deploy(name):
 def live_status(a):
     if a["status"] in ("deploying", "failed", "new"):
         return a["status"]
-    r = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", f"minipaas-{a['name']}"],
+    cname = f"deployer-{a['name']}"
+    r = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", cname],
                        capture_output=True, text=True)
+    if r.returncode != 0:
+        cname = f"minipaas-{a['name']}"
+        r = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", cname],
+                           capture_output=True, text=True)
     st = r.stdout.strip() if r.returncode == 0 else "missing"
     return a["status"] if (st == "running" and a["status"] == "no-tls") else st
 
@@ -310,6 +316,7 @@ def redeploy(name):
 @login_required
 def delete(name):
     a = get_app(name)
+    subprocess.run(["docker", "rm", "-f", f"deployer-{name}"], capture_output=True)
     subprocess.run(["docker", "rm", "-f", f"minipaas-{name}"], capture_output=True)
     remove_vhost(a["domain"])
     shutil.rmtree(f"{DATA}/repos/{name}", ignore_errors=True)
