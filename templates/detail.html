@@ -1,7 +1,13 @@
 {% extends "base.html" %}{% block body %}
 <div class="bar"><h2 style="margin:0">{{ app.name }} <span id="st" class="badge {{ status }}">{{ status }}</span></h2>
-<div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 <form method="post" action="/apps/{{ app.name }}/deploy" class="inline"><button class="btn">Deploy now</button></form>
+<form method="post" action="/apps/{{ app.name }}/restart" class="inline"><button class="btn ghost">Restart</button></form>
+{% if status in ('running', 'no-tls') %}
+<form method="post" action="/apps/{{ app.name }}/stop" class="inline"><button class="btn ghost">Stop</button></form>
+{% elif status in ('exited', 'missing', 'failed') %}
+<form method="post" action="/apps/{{ app.name }}/start" class="inline"><button class="btn ghost">Start</button></form>
+{% endif %}
 <a class="btn ghost" href="/apps/{{ app.name }}/edit">Edit</a>
 <form method="post" action="/apps/{{ app.name }}/delete" class="inline" onsubmit="return confirm('Delete {{ app.name }}?')"><button class="btn danger">Delete</button></form>
 </div></div>
@@ -54,6 +60,11 @@ async function poll(){
   const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 40;
   el.innerHTML = ansiToHtml(d.log);
   if(atBottom) el.scrollTop = el.scrollHeight;
+  const badge = document.getElementById('st');
+  if(badge && d.status && badge.textContent !== d.status){
+    badge.textContent = d.status;
+    badge.className = 'badge ' + d.status;
+  }
   if(d.status==='deploying') setTimeout(poll,2000); else if(wasDeploying) location.reload();
 }
 poll();

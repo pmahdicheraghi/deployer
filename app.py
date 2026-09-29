@@ -473,6 +473,39 @@ def redeploy(name):
     start_deploy(name)
     return redirect(url_for("detail", name=name))
 
+@app.post("/apps/<name>/restart")
+@login_required
+def restart(name):
+    get_app_or_404(name)
+    r = subprocess.run(["docker", "restart", f"{APP_PREFIX}-{name}"], capture_output=True, text=True)
+    if r.returncode == 0:
+        flash("Container restarted.")
+    else:
+        flash(f"Restart failed: {r.stderr.strip() or 'container missing'}")
+    return redirect(url_for("detail", name=name))
+
+@app.post("/apps/<name>/stop")
+@login_required
+def stop(name):
+    get_app_or_404(name)
+    r = subprocess.run(["docker", "stop", f"{APP_PREFIX}-{name}"], capture_output=True, text=True)
+    if r.returncode == 0:
+        flash("Container stopped.")
+    else:
+        flash(f"Stop failed: {r.stderr.strip() or 'container missing'}")
+    return redirect(url_for("detail", name=name))
+
+@app.post("/apps/<name>/start")
+@login_required
+def start(name):
+    get_app_or_404(name)
+    r = subprocess.run(["docker", "start", f"{APP_PREFIX}-{name}"], capture_output=True, text=True)
+    if r.returncode == 0:
+        flash("Container started.")
+    else:
+        flash(f"Start failed: {r.stderr.strip() or 'container missing'}")
+    return redirect(url_for("detail", name=name))
+
 @app.post("/apps/<name>/delete")
 @login_required
 def delete(name):
