@@ -10,10 +10,21 @@ DATA = os.environ.get("DATA_DIR", "/data")
 CONF_DIR, LE_DIR = "/etc/nginx/conf.d", "/etc/letsencrypt"
 NETWORK = os.environ.get("DOCKER_NETWORK", "web")
 PANEL_DOMAIN = os.environ.get("PANEL_DOMAIN", "")
+BASE_DOMAIN = os.environ.get("BASE_DOMAIN", "").strip().lower()
+if not BASE_DOMAIN and PANEL_DOMAIN and "." in PANEL_DOMAIN:
+    parts = PANEL_DOMAIN.split(".")
+    if len(parts) > 2:
+        BASE_DOMAIN = ".".join(parts[1:])
 ACME_EMAIL = os.environ["ACME_EMAIL"]
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 LE_VOL = os.environ.get("LE_VOLUME", "deployer_letsencrypt")
 WWW_VOL = os.environ.get("WWW_VOLUME", "deployer_certbot-www")
+
+def normalize_domain(d):
+    d = (d or "").strip().lower()
+    if d and "." not in d and BASE_DOMAIN:
+        return f"{d}.{BASE_DOMAIN}"
+    return d
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or hashlib.sha256(("k" + ADMIN_PASSWORD).encode()).hexdigest()
@@ -238,14 +249,14 @@ def validate(f, existing=None):
     apps = load()
     if not existing and (not NAME_RE.match(name) or name in apps):
         return "Name must be lowercase letters/digits/dashes and unique."
-    domain = f.get("domain", "").strip().lower()
+    domain = normalize_domain(f.get("domain", ""))
     if not DOMAIN_RE.match(domain):
         return "Invalid domain."
     if domain == PANEL_DOMAIN or any(o["domain"] == domain and o["name"] != name for o in apps.values()):
         return "Domain already in use."
     if not f.get("repo_url", "").startswith("https://"):
         return "Repository URL must start with https://"
-    if not (f.get("port", "").isdigit() and 0 < int(f["port"]) < 65536):
+    if not (str(f.get("port", "")).isdigit() and 0 < int(f["port"]) < 65536):
         return "Invalid port."
     return None
 
@@ -260,33 +271,35 @@ def index():
 @login_required
 def new():
     if request.method == "POST":
-        f = request.form
+        f = dict(request.form)
+        f["domain"] = normalize_domain(f.get("domain", ""))
         err = validate(f)
         if err:
             flash(err)
-            return render_template("form.html", app=f, editing=False)
+            return render_template("form.html", app=f, editing=False, base_domain=BASE_DOMAIN)
         name = f["name"].strip().lower()
         a = dict(name=name, provider=f["provider"], repo_url=f["repo_url"].strip(), token=f.get("token", "").strip(),
-                 branch=f.get("branch", "main").strip() or "main", domain=f["domain"].strip().lower(),
+                 branch=f.get("branch", "main").strip() or "main", domain=f["domain"],
                  port=int(f["port"]), env=f.get("env", ""), secret=secrets.token_hex(16),
                  status="new", sha="", deployed_at=0)
         with slock:
             s = load(); s[name] = a; save(s)
         start_deploy(name)
         return redirect(url_for("detail", name=name))
-    return render_template("form.html", app={"branch": "main", "port": 80, "provider": "github"}, editing=False)
+    return render_template("form.html", app={"branch": "main", "port": 80, "provider": "github"}, editing=False, base_domain=BASE_DOMAIN)
 
 @app.route("/apps/<name>/edit", methods=["GET", "POST"])
 @login_required
 def edit(name):
     a = get_app(name)
     if request.method == "POST":
-        f = request.form
+        f = dict(request.form)
+        f["domain"] = normalize_domain(f.get("domain", ""))
         err = validate(f, existing=name)
         if err:
             flash(err)
-            return render_template("form.html", app={**a, **f}, editing=True)
-        new_domain = f["domain"].strip().lower()
+            return render_template("form.html", app={**a, **f}, editing=True, base_domain=BASE_DOMAIN)
+        new_domain = f["domain"]
         if new_domain != a["domain"]:
             remove_vhost(a["domain"])
         upd = dict(provider=f["provider"], repo_url=f["repo_url"].strip(), branch=f.get("branch", "main").strip() or "main",
@@ -296,7 +309,7 @@ def edit(name):
         update(name, **upd)
         flash("Saved. Click Deploy to apply.")
         return redirect(url_for("detail", name=name))
-    return render_template("form.html", app=a, editing=True)
+    return render_template("form.html", app=a, editing=True, base_domain=BASE_DOMAIN)
 
 @app.route("/apps/<name>")
 @login_required
