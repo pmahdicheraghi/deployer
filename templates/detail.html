@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<div class="bar"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">{{ app.name }}</h2> <span id="st" class="badge {{ status }}">{{ status }}</span> <span id="stats" class="badge" style="display:none;font-weight:normal"></span></div>
+<div class="bar"><h2 style="margin:0">{{ app.name }} <span id="st" class="badge {{ status }}">{{ status }}</span></h2>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 <form method="post" action="/apps/{{ app.name }}/deploy" class="inline"><button class="btn">Deploy now</button></form>
 <form method="post" action="/apps/{{ app.name }}/restart" class="inline"><button class="btn ghost">Restart</button></form>
@@ -24,6 +24,31 @@
 {% else %}GitLab → Settings → Webhooks: paste the secret as "Secret token", enable "Push events".{% endif %}</small>
 {% endif %}
 </div>
+
+<div class="card" id="stats_card" style="display:none;margin-top:16px">
+<div style="font-weight:600;margin-bottom:12px">Resource Usage</div>
+<div class="row">
+<div>
+<div class="bar" style="font-size:13px;margin-bottom:6px"><span>CPU</span><b id="cpu_val">0%</b></div>
+<div style="background:var(--bd);height:8px;border-radius:4px;overflow:hidden">
+<div id="cpu_bar" style="background:var(--ac);height:100%;width:0%;transition:width 0.4s ease"></div>
+</div>
+</div>
+<div>
+<div class="bar" style="font-size:13px;margin-bottom:6px"><span>Memory</span><b id="mem_val">0B / 0B (0%)</b></div>
+<div style="background:var(--bd);height:8px;border-radius:4px;overflow:hidden">
+<div id="mem_bar" style="background:#16a34a;height:100%;width:0%;transition:width 0.4s ease"></div>
+</div>
+</div>
+<div>
+<div class="bar" style="font-size:13px;margin-bottom:6px"><span>Disk</span><b id="disk_val">0B / 0B (0%)</b></div>
+<div style="background:var(--bd);height:8px;border-radius:4px;overflow:hidden">
+<div id="disk_bar" style="background:#8b5cf6;height:100%;width:0%;transition:width 0.4s ease"></div>
+</div>
+</div>
+</div>
+</div>
+
 <h3>Deploy log</h3><pre id="log">loading…</pre>
 <script>
 const name={{ app.name|tojson }}, wasDeploying={{ 'true' if status=='deploying' else 'false' }};
@@ -72,19 +97,37 @@ poll();
 async function pollStats(){
   const badge = document.getElementById('st');
   const st = badge ? badge.textContent.trim() : '';
-  const el = document.getElementById('stats');
+  const card = document.getElementById('stats_card');
   if(st === 'running' || st === 'no-tls'){
     try {
       const res = await fetch(`/apps/${name}/stats.json`);
       const data = await res.json();
-      if(el && data.stats && data.stats.cpu){
+      if(data.stats && data.stats.cpu){
+        const cpuNum = parseFloat(data.stats.cpu) || 0;
+        const memNum = parseFloat(data.stats.mem_perc) || 0;
+
+        document.getElementById('cpu_val').textContent = data.stats.cpu;
+        document.getElementById('cpu_bar').style.width = Math.min(cpuNum, 100) + '%';
+
         const perc = data.stats.mem_perc ? ` (${data.stats.mem_perc})` : '';
-        el.textContent = `⚡ ${data.stats.cpu} CPU · 💾 ${data.stats.mem}${perc}`;
-        el.style.display = '';
+        document.getElementById('mem_val').textContent = `${data.stats.mem}${perc}`;
+        const memBar = document.getElementById('mem_bar');
+        memBar.style.width = Math.min(memNum, 100) + '%';
+        memBar.style.background = memNum > 85 ? '#dc2626' : (memNum > 70 ? '#d97706' : '#16a34a');
+
+        if(data.stats.disk){
+          const diskNum = parseFloat(data.stats.disk_perc) || 0;
+          document.getElementById('disk_val').textContent = `${data.stats.disk} (${data.stats.disk_perc})`;
+          const diskBar = document.getElementById('disk_bar');
+          diskBar.style.width = Math.min(diskNum, 100) + '%';
+          diskBar.style.background = diskNum > 85 ? '#dc2626' : (diskNum > 70 ? '#d97706' : '#8b5cf6');
+        }
+
+        if(card) card.style.display = '';
       }
     } catch(e){}
   } else {
-    if(el) el.style.display = 'none';
+    if(card) card.style.display = 'none';
   }
   setTimeout(pollStats, 4000);
 }

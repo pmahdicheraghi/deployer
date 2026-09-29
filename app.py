@@ -316,19 +316,31 @@ def live_status(a):
     return a["status"] if (st == "running" and a["status"] == "no-tls") else st
 
 def container_stats(name):
+    out = {}
     try:
         r = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{json .}}", f"{APP_PREFIX}-{name}"],
                            capture_output=True, text=True, timeout=3)
         if r.returncode == 0 and r.stdout.strip():
             d = json.loads(r.stdout.strip())
-            return {
-                "cpu": d.get("CPUPerc", "0%"),
-                "mem": d.get("MemUsage", ""),
-                "mem_perc": d.get("MemPerc", "0%")
-            }
+            out["cpu"] = d.get("CPUPerc", "0%")
+            out["mem"] = d.get("MemUsage", "")
+            out["mem_perc"] = d.get("MemPerc", "0%")
     except Exception:
         pass
-    return None
+
+    try:
+        total, used, free = shutil.disk_usage(DATA)
+        def fmt(b):
+            for u in ["B", "KB", "MB", "GB", "TB"]:
+                if b < 1024: return f"{b:.1f}{u}"
+                b /= 1024
+            return f"{b:.1f}PB"
+        out["disk"] = f"{fmt(used)} / {fmt(total)}"
+        out["disk_perc"] = f"{(used / total * 100):.1f}%" if total else "0%"
+    except Exception:
+        pass
+
+    return out if out else None
 
 
 # ---------- auth ----------
