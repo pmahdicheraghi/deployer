@@ -564,22 +564,13 @@ def github_webhook():
 # ---------- bootstrap: put the panel itself behind nginx + TLS ----------
 def bootstrap():
     if not PANEL_DOMAIN: return
-    import socket
-    wait = 10
-    for attempt in range(1, 20):
+    for _ in range(10):
         try:
-            try:
-                socket.gethostbyname(PANEL_DOMAIN)
-            except socket.gaierror:
-                print(f"bootstrap: waiting for DNS to resolve {PANEL_DOMAIN}...", flush=True)
-                time.sleep(15)
-                continue
             provision(PANEL_DOMAIN, "http://deployer:8080", sys.stdout)
             print("panel ready at https://" + PANEL_DOMAIN, flush=True)
             return
         except Exception as e:
-            print(f"bootstrap retry ({attempt}):", e, flush=True)
-            time.sleep(wait)
-            wait = min(wait * 2, 60)
+            print("bootstrap retry:", e, flush=True)
+            time.sleep(5)
 
 threading.Thread(target=bootstrap, daemon=True).start()
