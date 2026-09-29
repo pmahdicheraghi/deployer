@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block body %}
+<div class="bar"><h2 style="margin:0">{{ app.name }} <span id="st" class="badge {{ status }}">{{ status }}</span></h2>
+<div>
+<form method="post" action="/apps/{{ app.name }}/deploy" class="inline"><button class="btn">Deploy now</button></form>
+<a class="btn ghost" href="/apps/{{ app.name }}/edit">Edit</a>
+<form method="post" action="/apps/{{ app.name }}/delete" class="inline" onsubmit="return confirm('Delete {{ app.name }}?')"><button class="btn danger">Delete</button></form>
+</div></div>
+<div class="card" style="margin-top:16px">
+<p><b>URL:</b> <a href="https://{{ app.domain }}" target="_blank">https://{{ app.domain }}</a></p>
+<p><b>Repo:</b> {{ app.repo_url }} <span class="mut">({{ app.branch }})</span></p>
+<p><b>Webhook URL:</b> <code>{{ webhook }}</code></p>
+<p><b>Webhook secret:</b> <code>{{ app.secret }}</code></p>
+<small>{% if app.provider == 'github' %}GitHub → Settings → Webhooks: content type <code>application/json</code>, paste the secret, "Just the push event".
+{% else %}GitLab → Settings → Webhooks: paste the secret as "Secret token", enable "Push events".{% endif %}</small>
+</div>
+<h3>Deploy log</h3><pre id="log">loading…</pre>
+<script>
+const name={{ app.name|tojson }}, wasDeploying={{ 'true' if status=='deploying' else 'false' }};
+async function poll(){
+  const d=await (await fetch(`/apps/${name}/log.json`)).json();
+  const el=document.getElementById('log'); el.textContent=d.log; el.scrollTop=el.scrollHeight;
+  if(d.status==='deploying') setTimeout(poll,2000); else if(wasDeploying) location.reload();
+}
+poll();
+</script>
+{% endblock %}

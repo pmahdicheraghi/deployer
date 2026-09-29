@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MiniPaaS</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--card:#f6f7f9;--bd:#e3e5e8;--ac:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e8e8e8;--mut:#9aa0aa;--card:#1a1d24;--bd:#2a2e37;--ac:#60a5fa}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+header{border-bottom:1px solid var(--bd);padding:12px 24px;display:flex;justify-content:space-between;align-items:center}
+header a{color:var(--fg);text-decoration:none;font-weight:600}
+main{max-width:920px;margin:24px auto;padding:0 16px}
+a{color:var(--ac)} table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--bd)}
+th{color:var(--mut);font-weight:500;font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
+.btn{background:var(--ac);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--bd)}
+.btn.danger{background:#dc2626}
+input,select,textarea{width:100%;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+label{display:block;margin:12px 0 4px;font-weight:500}
+small,.mut{color:var(--mut)}
+.badge{padding:2px 8px;border-radius:99px;font-size:12px;background:var(--bd)}
+.badge.running{background:#16a34a22;color:#16a34a}
+.badge.failed,.badge.missing,.badge.exited{background:#dc262622;color:#dc2626}
+.badge.deploying,.badge.no-tls{background:#d9770622;color:#d97706}
+pre{background:#0d1117;color:#d1d5db;padding:12px;border-radius:8px;overflow:auto;max-height:420px;font-size:12.5px;white-space:pre-wrap}
+.flash{background:#dc262615;border:1px solid #dc262655;padding:10px;border-radius:6px;margin-bottom:12px}
+form.inline{display:inline} code{background:var(--card);padding:1px 5px;border-radius:4px;word-break:break-all}
+.row{display:flex;gap:12px}.row>div{flex:1}.bar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+</style></head><body>
+<header><a href="/">🚀 MiniPaaS</a>
+{% if session.get('auth') %}<form method="post" action="/logout" class="inline"><button class="btn ghost">Log out</button></form>{% endif %}</header>
+<main>
+{% for m in get_flashed_messages() %}<div class="flash">{{ m }}</div>{% endfor %}
+{% block body %}{% endblock %}
+</main></body></html>
