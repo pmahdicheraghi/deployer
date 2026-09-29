@@ -57,6 +57,9 @@
 <div style="flex:none;padding-top:8px">.{{ base_domain }}</div>
 </div>
 
+<label style="margin-top:16px">Custom domain <small>(optional, e.g. example.com)</small></label>
+<input name="custom_domain" id="custom_domain" value="{{ app.custom_domain or '' }}" placeholder="example.com">
+
 <div class="row" style="margin-top:8px"><div><label>Branch</label>
 <select name="branch" id="branch_select" style="display:none"></select>
 <input name="branch" id="branch_input" value="{{ app.branch or 'main' }}">

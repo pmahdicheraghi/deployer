@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block body %}
 <div class="bar"><h2 style="margin:0">Apps</h2><a class="btn" href="/apps/new">+ New app</a></div>
-<p class="mut">Apps deploy as subdomains of <code>{{ base_domain }}</code>.</p>
+<p class="mut">Apps deploy as subdomains of <code>{{ base_domain }}</code> or custom domains.</p>
 {% if apps %}
 <table style="margin-top:12px"><tr><th>Name</th><th>Domain</th><th>Source</th><th>Status</th><th>Commit</th><th>Deployed</th><th></th></tr>
 {% for a in apps %}<tr>

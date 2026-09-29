@@ -13,6 +13,9 @@
 </div></div>
 <div class="card" style="margin-top:16px">
 <p><b>URL:</b> <a href="https://{{ app.domain }}" target="_blank">https://{{ app.domain }}</a></p>
+{% if app.custom_domain %}
+<p><small class="mut">DNS setup: Point an <b>A</b> record to this server's IP, or a <b>CNAME</b> record to <code>{{ app.subdomain or app.name }}.{{ base_domain }}</code>.</small></p>
+{% endif %}
 {% if app.method == 'github_app' %}
 <p><b>Repo:</b> {{ app.repo_full_name }} <span class="mut">({{ app.branch }})</span> — via connected GitHub account</p>
 <p><small>Deploys automatically on every push to <code>{{ app.branch }}</code>. No webhook setup needed — it's handled by the GitHub App.</small></p>

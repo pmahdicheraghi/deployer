@@ -48,6 +48,7 @@ STATE = f"{DATA}/state.json"
 slock, dlocks = threading.RLock(), {}
 SUB_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$")
 
 
 # ---------- state ----------
@@ -426,11 +427,16 @@ def get_app_or_404(name):
     if not a: abort(404)
     return a
 
-def subdomain_taken(sub, existing=None):
-    domain = f"{sub}.{APP_BASE_DOMAIN}"
+def domain_taken(domain, existing=None):
     if PANEL_DOMAIN and domain == PANEL_DOMAIN:
         return True
-    return any(o["domain"] == domain and o["name"] != existing for o in get_apps().values())
+    return any((o.get("domain") == domain or o.get("custom_domain") == domain) and o["name"] != existing for o in get_apps().values())
+
+def subdomain_taken(sub, existing=None):
+    default_domain = f"{sub}.{APP_BASE_DOMAIN}"
+    if PANEL_DOMAIN and default_domain == PANEL_DOMAIN:
+        return True
+    return any((o.get("subdomain") == sub or o.get("domain") == default_domain) and o["name"] != existing for o in get_apps().values())
 
 def validate(f, existing=None):
     errors = []
@@ -442,6 +448,12 @@ def validate(f, existing=None):
         errors.append("Subdomain must be lowercase letters, digits and dashes.")
     elif subdomain_taken(sub, existing):
         errors.append("That subdomain is already in use.")
+    custom = f.get("custom_domain", "").strip().lower()
+    if custom:
+        if not DOMAIN_RE.match(custom):
+            errors.append("Invalid custom domain format (e.g. example.com).")
+        elif domain_taken(custom, existing):
+            errors.append("That custom domain is already in use.")
     if not (f.get("port", "").isdigit() and 0 < int(f["port"]) < 65536):
         errors.append("Invalid port.")
     method = f.get("method", "manual")
@@ -473,8 +485,11 @@ def new():
                                   gh_enabled=GH_APP_ENABLED, installations=installations)
         name = f["name"].strip().lower()
         method = f.get("method", "manual")
+        sub = f.get("subdomain", "").strip().lower()
+        custom = f.get("custom_domain", "").strip().lower()
+        target_domain = custom if custom else f"{sub}.{APP_BASE_DOMAIN}"
         a = dict(name=name, method=method, branch=f.get("branch", "main").strip() or "main",
-                 domain=f"{f['subdomain'].strip().lower()}.{APP_BASE_DOMAIN}",
+                 domain=target_domain, custom_domain=custom, subdomain=sub,
                  port=int(f["port"]), env=f.get("env", ""), secret=secrets.token_hex(16),
                  status="new", sha="", deployed_at=0)
         if method == "github_app":
@@ -503,10 +518,13 @@ def edit(name):
             for e in errors: flash(e)
             return render_template("form.html", app={**a, **f}, editing=True, base_domain=APP_BASE_DOMAIN,
                                   gh_enabled=GH_APP_ENABLED, installations=installations)
-        new_domain = f"{f['subdomain'].strip().lower()}.{APP_BASE_DOMAIN}"
+        sub = f.get("subdomain", "").strip().lower()
+        custom = f.get("custom_domain", "").strip().lower()
+        new_domain = custom if custom else f"{sub}.{APP_BASE_DOMAIN}"
         if new_domain != a["domain"]:
             remove_vhost(a["domain"])
         upd = dict(branch=f.get("branch", "main").strip() or "main", domain=new_domain,
+                   custom_domain=custom, subdomain=sub,
                    port=int(f["port"]), env=f.get("env", ""), method=f.get("method", "manual"))
         if upd["method"] == "github_app":
             upd.update(installation_id=f["installation_id"], repo_full_name=f["repo_full_name"], provider="github")
@@ -517,7 +535,12 @@ def edit(name):
         update_app(name, **upd)
         flash("Saved. Click Deploy to apply.")
         return redirect(url_for("detail", name=name))
-    a = dict(a); a["subdomain"] = a["domain"][: -(len(APP_BASE_DOMAIN) + 1)]
+    a = dict(a)
+    if "subdomain" not in a:
+        if a["domain"].endswith(f".{APP_BASE_DOMAIN}"):
+            a["subdomain"] = a["domain"][: -(len(APP_BASE_DOMAIN) + 1)]
+        else:
+            a["subdomain"] = a["name"]
     return render_template("form.html", app=a, editing=True, base_domain=APP_BASE_DOMAIN,
                           gh_enabled=GH_APP_ENABLED, installations=installations)
 
@@ -527,7 +550,7 @@ def detail(name):
     a = get_app_or_404(name)
     base = f"https://{PANEL_DOMAIN}" if PANEL_DOMAIN else request.host_url.rstrip("/")
     webhook = f"{base}/webhook/github (shared)" if a["method"] == "github_app" else f"{base}/webhook/{name}"
-    return render_template("detail.html", app=a, status=live_status(a), webhook=webhook)
+    return render_template("detail.html", app=a, status=live_status(a), webhook=webhook, base_domain=APP_BASE_DOMAIN)
 
 @app.post("/apps/<name>/deploy")
 @login_required
