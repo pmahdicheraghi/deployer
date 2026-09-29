@@ -1,5 +1,5 @@
 """Deployer: push-to-deploy panel (GitHub App or manual GitHub/GitLab -> docker build -> nginx + Let's Encrypt)."""
-import hashlib, hmac, json, os, re, secrets, shutil, subprocess, sys, threading, time
+import hashlib, hmac, json, os, re, secrets, shutil, socket, subprocess, sys, threading, time
 from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import quote
@@ -223,6 +223,26 @@ def clone_url_for(a):
         return u, [a["token"]]
     return u, []
 
+def wait_ready(container, port, lf, timeout=15):
+    lf.write(f"Waiting for {container}:{port} to be ready...\n"); lf.flush()
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        st = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", container],
+                            capture_output=True, text=True).stdout.strip()
+        if st in ("exited", "dead"):
+            logs = subprocess.run(["docker", "logs", "--tail", "15", container],
+                                  capture_output=True, text=True).stdout.strip()
+            raise RuntimeError(f"Container {container} exited unexpectedly:\n{logs}")
+        try:
+            with socket.create_connection((container, port), timeout=1):
+                lf.write(f"{container} is ready.\n"); lf.flush()
+                return True
+        except (socket.error, OSError):
+            time.sleep(1)
+    lf.write(f"Warning: {container}:{port} did not respond to TCP within {timeout}s (proceeding).\n")
+    lf.flush()
+    return False
+
 def deploy(name):
     lock = dlocks.setdefault(name, threading.Lock())
     if not lock.acquire(blocking=False):
@@ -246,12 +266,28 @@ def deploy(name):
 
                 image = f"{container}:{sha}"
                 sh(["docker", "build", "-t", image, path], lf)
-                sh(["docker", "rm", "-f", container], lf, check=False)
-                cmd = ["docker", "run", "-d", "--name", container, "--restart", "unless-stopped",
-                       "--network", NETWORK]
+
+                old_running = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", container],
+                                             capture_output=True, text=True).stdout.strip() == "true"
+                target = f"{container}-next" if old_running else container
+                subprocess.run(["docker", "rm", "-f", target], capture_output=True)
+
+                cmd = ["docker", "run", "-d", "--name", target, "--network", NETWORK]
                 for k, v in parse_env(a.get("env")).items():
                     cmd += ["-e", f"{k}={v}"]
                 sh(cmd + [image], lf)
+
+                try:
+                    wait_ready(target, a["port"], lf)
+                except Exception:
+                    subprocess.run(["docker", "rm", "-f", target], capture_output=True)
+                    raise
+
+                if old_running:
+                    sh(["docker", "rm", "-f", container], lf)
+                    sh(["docker", "rename", target, container], lf)
+
+                sh(["docker", "update", "--restart", "unless-stopped", container], lf)
                 sh(["docker", "image", "prune", "-f"], lf, check=False)
 
                 status = "running"
@@ -438,7 +474,7 @@ def new():
             s = load(); s.setdefault("apps", {})[name] = a; save(s)
         start_deploy(name)
         return redirect(url_for("detail", name=name))
-    prefill = {"branch": "main", "port": 80, "method": "github_app" if GH_APP_ENABLED else "manual",
+    prefill = {"port": 80, "method": "github_app" if GH_APP_ENABLED else "manual",
               "provider": "github", "installation_id": request.args.get("installation_id", "")}
     return render_template("form.html", app=prefill, editing=False, base_domain=APP_BASE_DOMAIN,
                           gh_enabled=GH_APP_ENABLED, installations=installations)

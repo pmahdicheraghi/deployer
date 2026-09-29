@@ -162,8 +162,9 @@ async function onRepoChange(){
   suggestName(repo);
 
   const repoInfo = reposData.find(x => x.full_name === repo);
-  const defBranch = (repoInfo && repoInfo.default_branch) || 'main';
-  const targetBranch = {{ (app.branch or '')|tojson }} || defBranch;
+  const defBranch = (repoInfo && repoInfo.default_branch) || '';
+  const isEditing = {{ 'true' if editing else 'false' }};
+  const targetBranch = isEditing ? {{ (app.branch or '')|tojson }} : defBranch;
 
   const sel = document.getElementById('branch_select');
   showBranchSelect();
@@ -174,27 +175,34 @@ async function onRepoChange(){
     const data = await res.json();
     if(data.branches && data.branches.length){
       sel.innerHTML = '';
+      const chosen = (targetBranch && data.branches.includes(targetBranch))
+        ? targetBranch
+        : (data.branches.includes(defBranch) ? defBranch : data.branches[0]);
+
       data.branches.forEach(b => {
         const o = document.createElement('option');
         o.value = b;
         o.textContent = b;
-        if(b === targetBranch || (!targetBranch && b === defBranch)){
+        if(b === chosen){
           o.selected = true;
         }
         sel.appendChild(o);
       });
-      if(targetBranch && !data.branches.includes(targetBranch)){
+
+      if(isEditing && targetBranch && !data.branches.includes(targetBranch)){
         const o = document.createElement('option');
         o.value = targetBranch;
-        o.textContent = targetBranch;
+        o.textContent = targetBranch + ' (current)';
         o.selected = true;
         sel.prepend(o);
       }
     } else {
       showBranchInput();
+      document.getElementById('branch_input').value = defBranch || 'main';
     }
   } catch(err){
     showBranchInput();
+    document.getElementById('branch_input').value = defBranch || 'main';
   }
 }
 
