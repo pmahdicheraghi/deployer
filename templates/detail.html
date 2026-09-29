@@ -21,9 +21,39 @@
 <h3>Deploy log</h3><pre id="log">loading…</pre>
 <script>
 const name={{ app.name|tojson }}, wasDeploying={{ 'true' if status=='deploying' else 'false' }};
+const ANSI = {
+  30:'#4b5563',31:'#ef4444',32:'#22c55e',33:'#eab308',34:'#3b82f6',35:'#a855f7',36:'#06b6d4',37:'#e5e7eb',
+  90:'#6b7280',91:'#f87171',92:'#4ade80',93:'#facc15',94:'#60a5fa',95:'#c084fc',96:'#22d3ee',97:'#ffffff'
+};
+function ansiToHtml(str) {
+  const escapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+  const safe = (str || '').replace(/[&<>"]/g, c => escapes[c]);
+  let open = false;
+  let html = safe.replace(/(?:\x1b|\u001b)?\[([0-9;]+)m/g, (_, codes) => {
+    let out = open ? '</span>' : '';
+    open = false;
+    if (!codes || codes === '0') return out;
+    const styles = [];
+    codes.split(';').forEach(c => {
+      const n = parseInt(c, 10);
+      if (ANSI[n]) styles.push('color:' + ANSI[n]);
+      else if (n === 1) styles.push('font-weight:bold');
+    });
+    if (styles.length) {
+      open = true;
+      out += '<span style="' + styles.join(';') + '">';
+    }
+    return out;
+  });
+  if (open) html += '</span>';
+  return html.replace(/(?:\x1b|\u001b)\[[0-9;?]*[A-Za-z]/g, '');
+}
 async function poll(){
   const d=await (await fetch(`/apps/${name}/log.json`)).json();
-  const el=document.getElementById('log'); el.textContent=d.log; el.scrollTop=el.scrollHeight;
+  const el=document.getElementById('log');
+  const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 40;
+  el.innerHTML = ansiToHtml(d.log);
+  if(atBottom) el.scrollTop = el.scrollHeight;
   if(d.status==='deploying') setTimeout(poll,2000); else if(wasDeploying) location.reload();
 }
 poll();
