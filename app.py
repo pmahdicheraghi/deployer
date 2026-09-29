@@ -127,6 +127,22 @@ def gh_list_repos(installation_id):
         page += 1
     return repos
 
+def gh_list_branches(installation_id, repo_full_name):
+    token = gh_installation_token(installation_id)
+    branches, page = [], 1
+    while True:
+        r = requests.get(f"https://api.github.com/repos/{repo_full_name}/branches",
+                         params={"per_page": 100, "page": page},
+                         headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                         timeout=15)
+        r.raise_for_status()
+        batch = r.json()
+        branches += [b["name"] for b in batch]
+        if len(batch) < 100 or len(branches) >= 300:
+            break
+        page += 1
+    return branches
+
 
 # ---------- shell / nginx / certbot ----------
 def sh(cmd, lf, hide=(), check=True):
@@ -325,6 +341,18 @@ def api_github_repos():
         abort(404)
     try:
         return jsonify(repos=gh_list_repos(installation_id))
+    except requests.HTTPError as e:
+        return jsonify(error=str(e)), 502
+
+@app.get("/api/github/branches")
+@login_required
+def api_github_branches():
+    installation_id = request.args.get("installation_id")
+    repo = request.args.get("repo")
+    if not installation_id or not repo or installation_id not in load().get("installations", {}):
+        abort(404)
+    try:
+        return jsonify(branches=gh_list_branches(installation_id, repo))
     except requests.HTTPError as e:
         return jsonify(error=str(e)), 502
 

@@ -15,22 +15,14 @@
 {% endif %}
 
 <form method="post" class="card" id="appform">
-{% if not editing %}<label>Name</label><input name="name" value="{{ app.name or '' }}" placeholder="myapp" required>{% endif %}
-
-<label>Subdomain</label>
-<div class="row" style="align-items:center">
-<div><input name="subdomain" value="{{ app.subdomain or '' }}" placeholder="myapp" required pattern="[a-z0-9][a-z0-9-]*"></div>
-<div style="flex:none;padding-top:8px">.{{ base_domain }}</div>
-</div>
-
 {% if gh_enabled and installations %}
-<label style="margin-top:20px">Source</label>
+<label>Source</label>
 <select name="method" id="method" onchange="toggleMethod()">
 <option value="github_app" {{ 'selected' if app.method != 'manual' }}>GitHub (connected account)</option>
 <option value="manual" {{ 'selected' if app.method == 'manual' }}>Manual repository URL</option>
 </select>
 {% else %}
-<input type="hidden" name="method" value="manual">
+<input type="hidden" name="method" id="method" value="manual">
 {% endif %}
 
 <div id="gh_fields">
@@ -38,11 +30,11 @@
 <select name="installation_id" id="installation_id" onchange="loadRepos()">
 <option value="">Select an account…</option>
 {% for id, info in installations.items() %}
-<option value="{{ id }}" {{ 'selected' if app.installation_id == id }}>{{ info.account }}</option>
+<option value="{{ id }}" {{ 'selected' if app.installation_id == id or (not app.installation_id and loop.first and installations|length == 1) }}>{{ info.account }}</option>
 {% endfor %}
 </select>
 <label>Repository</label>
-<select name="repo_full_name" id="repo_full_name">
+<select name="repo_full_name" id="repo_full_name" onchange="onRepoChange()">
 <option value="{{ app.repo_full_name or '' }}">{{ app.repo_full_name or 'Select an account first…' }}</option>
 </select>
 </div>
@@ -52,12 +44,23 @@
 <select name="provider"><option value="github" {{ 'selected' if app.provider=='github' }}>GitHub</option>
 <option value="gitlab" {{ 'selected' if app.provider=='gitlab' }}>GitLab</option></select></div>
 <div></div></div>
-<label>Repository URL</label><input name="repo_url" value="{{ app.repo_url or '' }}" placeholder="https://github.com/user/repo.git">
+<label>Repository URL</label><input name="repo_url" id="repo_url" value="{{ app.repo_url or '' }}" placeholder="https://github.com/user/repo.git" oninput="onManualUrlChange()">
 <label>Access token <small>(private repos only{{ '; leave blank to keep current' if editing }})</small></label>
 <input type="password" name="token" autocomplete="new-password">
 </div>
 
-<div class="row" style="margin-top:8px"><div><label>Branch</label><input name="branch" value="{{ app.branch or 'main' }}"></div>
+{% if not editing %}<label style="margin-top:16px">Name</label><input name="name" id="name" value="{{ app.name or '' }}" placeholder="myapp" required>{% endif %}
+
+<label style="margin-top:16px">Subdomain</label>
+<div class="row" style="align-items:center">
+<div><input name="subdomain" id="subdomain" value="{{ app.subdomain or '' }}" placeholder="myapp" required pattern="[a-z0-9][a-z0-9-]*"></div>
+<div style="flex:none;padding-top:8px">.{{ base_domain }}</div>
+</div>
+
+<div class="row" style="margin-top:8px"><div><label>Branch</label>
+<select name="branch" id="branch_select" style="display:none"></select>
+<input name="branch" id="branch_input" value="{{ app.branch or 'main' }}">
+</div>
 <div><label>Container port</label><input name="port" value="{{ app.port or 80 }}" required></div></div>
 <label>Environment variables <small>(KEY=value, one per line)</small></label>
 <textarea name="env" rows="5">{{ app.env or '' }}</textarea>
@@ -65,27 +68,143 @@
 <a class="btn ghost" href="/">Cancel</a></p></form>
 
 <script>
+let reposData = [];
+let prevSuggested = '';
+
+function sanitizeName(s){
+  return s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30).replace(/-+$/, '');
+}
+
+function suggestName(repo){
+  if(!repo) return;
+  const raw = repo.split('/').pop().replace(/\.git$/, '');
+  const clean = sanitizeName(raw);
+  if(!clean) return;
+  const nameEl = document.getElementById('name');
+  const subEl = document.getElementById('subdomain');
+  if(nameEl && (!nameEl.value || nameEl.value === prevSuggested)){
+    nameEl.value = clean;
+  }
+  if(subEl && (!subEl.value || subEl.value === prevSuggested)){
+    subEl.value = clean;
+  }
+  prevSuggested = clean;
+}
+
+function showBranchInput(){
+  const inp = document.getElementById('branch_input');
+  const sel = document.getElementById('branch_select');
+  inp.style.display = '';
+  inp.disabled = false;
+  sel.style.display = 'none';
+  sel.disabled = true;
+}
+
+function showBranchSelect(){
+  const inp = document.getElementById('branch_input');
+  const sel = document.getElementById('branch_select');
+  inp.style.display = 'none';
+  inp.disabled = true;
+  sel.style.display = '';
+  sel.disabled = false;
+}
+
 function toggleMethod(){
   const m = document.getElementById('method') ? document.getElementById('method').value : 'manual';
   document.getElementById('gh_fields').style.display = m === 'github_app' ? '' : 'none';
   document.getElementById('manual_fields').style.display = m === 'manual' ? '' : 'none';
+  if(m === 'manual'){
+    showBranchInput();
+  } else {
+    onRepoChange();
+  }
 }
+
 async function loadRepos(){
   const id = document.getElementById('installation_id').value;
   const sel = document.getElementById('repo_full_name');
-  if(!id){ sel.innerHTML = '<option value="">Select an account first…</option>'; return; }
+  if(!id){
+    sel.innerHTML = '<option value="">Select an account first…</option>';
+    reposData = [];
+    showBranchInput();
+    return;
+  }
   sel.innerHTML = '<option>Loading…</option>';
   const r = await fetch(`/api/github/repos?installation_id=${id}`);
   const d = await r.json();
   sel.innerHTML = '';
-  (d.repos || []).forEach(repo => {
+  reposData = d.repos || [];
+  if(!reposData.length){
+    sel.innerHTML = '<option value="">No repos found — grant access on GitHub</option>';
+    showBranchInput();
+    return;
+  }
+  reposData.forEach(repo => {
     const o = document.createElement('option');
-    o.value = repo.full_name; o.textContent = repo.full_name + (repo.private ? ' (private)' : '');
+    o.value = repo.full_name;
+    o.textContent = repo.full_name + (repo.private ? ' (private)' : '');
     sel.appendChild(o);
   });
-  if(!d.repos || !d.repos.length) sel.innerHTML = '<option value="">No repos found — grant access on GitHub</option>';
+  const currentRepo = {{ (app.repo_full_name or '')|tojson }};
+  if(currentRepo && reposData.some(x => x.full_name === currentRepo)){
+    sel.value = currentRepo;
+  }
+  onRepoChange();
 }
+
+async function onRepoChange(){
+  const repo = document.getElementById('repo_full_name').value;
+  const id = document.getElementById('installation_id').value;
+  if(!repo || !id){
+    showBranchInput();
+    return;
+  }
+  suggestName(repo);
+
+  const repoInfo = reposData.find(x => x.full_name === repo);
+  const defBranch = (repoInfo && repoInfo.default_branch) || 'main';
+  const targetBranch = {{ (app.branch or '')|tojson }} || defBranch;
+
+  const sel = document.getElementById('branch_select');
+  showBranchSelect();
+  sel.innerHTML = '<option>Loading branches…</option>';
+
+  try {
+    const res = await fetch(`/api/github/branches?installation_id=${id}&repo=${encodeURIComponent(repo)}`);
+    const data = await res.json();
+    if(data.branches && data.branches.length){
+      sel.innerHTML = '';
+      data.branches.forEach(b => {
+        const o = document.createElement('option');
+        o.value = b;
+        o.textContent = b;
+        if(b === targetBranch || (!targetBranch && b === defBranch)){
+          o.selected = true;
+        }
+        sel.appendChild(o);
+      });
+      if(targetBranch && !data.branches.includes(targetBranch)){
+        const o = document.createElement('option');
+        o.value = targetBranch;
+        o.textContent = targetBranch;
+        o.selected = true;
+        sel.prepend(o);
+      }
+    } else {
+      showBranchInput();
+    }
+  } catch(err){
+    showBranchInput();
+  }
+}
+
+function onManualUrlChange(){
+  const val = document.getElementById('repo_url').value.trim();
+  suggestName(val);
+}
+
 toggleMethod();
-{% if app.installation_id %}document.getElementById('installation_id').value = {{ app.installation_id|tojson }}; loadRepos();{% endif %}
+const initialId = document.getElementById('installation_id') ? document.getElementById('installation_id').value : '';
+if(initialId){ loadRepos(); }
 </script>
 {% endblock %}
