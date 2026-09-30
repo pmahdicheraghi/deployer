@@ -14,7 +14,7 @@
 </div>
 {% endif %}
 
-<form method="post" class="card" id="appform">
+<form method="post" class="card" id="appform"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 {% if gh_enabled and installations %}
 <label>Source</label>
 <select name="method" id="method" onchange="toggleMethod()">
@@ -65,6 +65,9 @@
 <input name="branch" id="branch_input" value="{{ app.branch or 'main' }}">
 </div>
 <div><label>Container port</label><input name="port" value="{{ app.port or 80 }}" required></div></div>
+<label>HTTP readiness path <small>(optional; e.g. /health)</small></label>
+<input name="health_path" value="{{ app.health_path or '' }}" placeholder="/health">
+<small>Docker health checks are honored. Without a health check or HTTP path, readiness checks the container port.</small>
 <label>Environment variables <small>(KEY=value, one per line)</small></label>
 <textarea name="env" rows="5">{{ app.env or '' }}</textarea>
 <p><button class="btn">{{ 'Save' if editing else 'Create & deploy' }}</button>

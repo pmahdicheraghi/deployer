@@ -30,7 +30,7 @@ form.inline{display:inline} code{background:var(--card);padding:1px 5px;border-r
 .row{display:flex;gap:12px}.row>div{flex:1}.bar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 </style></head><body>
 <header><a href="/">🚀 Deployer</a>
-{% if session.get('auth') %}<form method="post" action="/logout" class="inline"><button class="btn ghost">Log out</button></form>{% endif %}</header>
+{% if session.get('auth') %}<form method="post" action="/logout" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn ghost">Log out</button></form>{% endif %}</header>
 <main>
 {% for m in get_flashed_messages() %}<div class="flash">{{ m }}</div>{% endfor %}
 {% block body %}{% endblock %}

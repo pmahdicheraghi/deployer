@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--basetemp=.pytest-tmp/current"
+markers = ["docker: isolated Docker/Nginx smoke test (RUN_DOCKER_TESTS=1)"]

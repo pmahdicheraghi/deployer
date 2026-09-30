@@ -5,12 +5,12 @@
 <table style="margin-top:12px"><tr><th>Name</th><th>Domain</th><th>Source</th><th>Status</th><th>Commit</th><th>Deployed</th><th></th></tr>
 {% for a in apps %}<tr>
 <td><a href="/apps/{{ a.name }}"><b>{{ a.name }}</b></a></td>
-<td><a href="https://{{ a.domain }}" target="_blank">{{ a.domain }}</a></td>
+<td><a href="https://{{ a.active_domain }}" target="_blank" rel="noopener">{{ a.active_domain }}</a>{% if a.active and a.domain != a.active_domain %}<br><small>Saved: {{ a.domain }}</small>{% endif %}</td>
 <td>{% if a.method == 'github_app' %}{{ a.repo_full_name }}{% else %}{{ a.provider }} · manual{% endif %} <span class="mut">({{ a.branch }})</span></td>
 <td><span class="badge {{ a.live }}">{{ a.live }}</span></td>
 <td><code>{{ a.sha or '-' }}</code></td>
 <td class="mut">{{ a.deployed_at | int | timestamp if a.deployed_at else '-' }}</td>
-<td><form method="post" action="/apps/{{ a.name }}/deploy" class="inline"><button class="btn ghost">Deploy</button></form></td>
+<td><form method="post" action="/apps/{{ a.name }}/deploy" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn ghost">Deploy</button></form></td>
 </tr>{% endfor %}</table>
 {% else %}<div class="card" style="margin-top:12px">No apps yet. Add your first repo to get started.</div>{% endif %}
 {% endblock %}

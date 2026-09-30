@@ -2,7 +2,7 @@ name: deployer
 
 services:
   nginx:
-    image: nginx:alpine
+    image: nginx:1.30.5-alpine
     container_name: nginx
     restart: unless-stopped
     ports: ["80:80", "443:443"]
@@ -11,11 +11,11 @@ services:
       - letsencrypt:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot:ro
     # reload every 6h so renewed certs get picked up
-    command: /bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g "daemon off;"'
+    command: /bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -t && nginx -s reload; done & exec nginx -g "daemon off;"'
     networks: [web]
 
   certbot-renew:
-    image: certbot/certbot
+    image: certbot/certbot:v5.1.0
     restart: unless-stopped
     volumes:
       - letsencrypt:/etc/letsencrypt
@@ -24,17 +24,46 @@ services:
 
   deployer:
     build: .
+    image: deployer-panel:local
     container_name: deployer
     restart: unless-stopped
     env_file: .env
     depends_on: [nginx]
     volumes:
+      # Dashboard uses the socket only for inspection/stats; mutations run in worker.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - nginx-conf:/etc/nginx/conf.d:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - data:/data
+      # GitHub App private key you downloaded from the app settings page
+      - type: bind
+        source: ./github-app-private-key.pem
+        target: /secrets/github-app-private-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [web]
+
+  worker:
+    build: .
+    image: deployer-panel:local
+    command: ["python", "-m", "deployer.deployment.worker"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    env_file: .env
+    depends_on: [nginx, deployer]
+    volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - nginx-conf:/etc/nginx/conf.d
       - letsencrypt:/etc/letsencrypt:ro
       - data:/data
-      # GitHub App private key you downloaded from the app settings page
-      - ./github-app-private-key.pem:/secrets/github-app-private-key.pem:ro
+      - type: bind
+        source: ./github-app-private-key.pem
+        target: /secrets/github-app-private-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
     networks: [web]
 
 networks:

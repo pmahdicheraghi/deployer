@@ -1,0 +1,13 @@
+.git
+.idea
+.venv
+__pycache__
+**/__pycache__
+.pytest_cache
+.pytest-tmp
+.env
+.env.*
+!.env.example
+github-app-private-key.pem
+tests
+*.sqlite3*

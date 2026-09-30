@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<form method="post" class="card" style="max-width:340px;margin:60px auto">
+<form method="post" class="card" style="max-width:340px;margin:60px auto"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <h3 style="margin-top:0">Sign in</h3>
 <label>Password</label><input type="password" name="password" autofocus required>
 <p><button class="btn">Sign in</button></p></form>
