@@ -98,6 +98,42 @@ def test_docker_inspection_does_not_treat_daemon_failure_as_missing(tmp_path):
         Docker(Settings(tmp_path,"apps.example.com","email","password","secret"),Runner()).inspect("candidate")
 
 
+@pytest.mark.parametrize("output", [
+    "Error: No such object: candidate\n",
+    "Error response from daemon: No such container: candidate\n",
+    "Error: no such object: candidate\n",
+    "Error response from daemon: no such container: candidate\n",
+])
+def test_missing_container_error_variants_allow_cleanup(tmp_path, output):
+    from deployer.integrations.docker import Docker
+    from deployer.config import Settings
+    class Runner:
+        def run(self, cmd, **kwargs): return output
+    docker = Docker(Settings(tmp_path,"apps.example.com","email","password","secret"),Runner())
+    assert docker.inspect("candidate") == {"Status":"missing"}
+    docker.remove("candidate", io.StringIO())
+
+
+def test_inspection_failure_preserves_docker_diagnostic(tmp_path):
+    from deployer.integrations.docker import Docker
+    from deployer.config import Settings
+    class Runner:
+        def run(self, *a, **kw): return "permission denied while connecting to Docker socket"
+    with pytest.raises(RuntimeError, match="permission denied"):
+        Docker(Settings(tmp_path,"apps.example.com","email","password","secret"),Runner()).inspect("candidate")
+
+
+def test_inspection_restricts_object_type_and_requires_valid_state(tmp_path):
+    from deployer.integrations.docker import Docker
+    from deployer.config import Settings
+    class Runner:
+        def run(self, cmd, **kwargs):
+            assert cmd[cmd.index("--type") + 1] == "container"
+            return "null"
+    with pytest.raises(RuntimeError, match="runtime state is unknown"):
+        Docker(Settings(tmp_path,"apps.example.com","email","password","secret"),Runner()).inspect("candidate")
+
+
 def test_command_redactor_removes_legacy_credential_urls():
     from deployer.integrations.commands import redact
     assert "synthetic-token" not in redact("fatal: https://x-access-token:synthetic-token@github.com/repo.git")

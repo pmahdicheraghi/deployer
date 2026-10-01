@@ -2,6 +2,7 @@
 import json
 
 from .git import parse_env
+from .commands import redact
 
 
 class Docker:
@@ -9,14 +10,19 @@ class Docker:
         self.settings, self.runner = settings, runner
 
     def inspect(self, container, *, timeout=None):
-        text = self.runner.run(["docker", "inspect", "-f", "{{json .State}}", container], check=False,
+        text = self.runner.run(["docker", "inspect", "--type", "container", "-f", "{{json .State}}", container], check=False,
                                description="inspect container", timeout=timeout)
         try:
-            return json.loads(text)
+            state = json.loads(text)
         except (ValueError, TypeError):
-            if "No such object" in text or "No such container" in text:
+            normalized = text.casefold()
+            if "no such object" in normalized or "no such container" in normalized:
                 return {"Status": "missing"}
-            raise RuntimeError("Docker inspection failed; runtime state is unknown.") from None
+        else:
+            if isinstance(state, dict) and isinstance(state.get("Status"), str):
+                return state
+        diagnostic = redact(text.strip())[:1000] or "Docker returned no output."
+        raise RuntimeError(f"Docker inspection failed for {container}; runtime state is unknown: {diagnostic}") from None
 
     def build(self, image, context, log, secrets=()):
         self.runner.run(["docker", "build", "-t", image, str(context)], log,
