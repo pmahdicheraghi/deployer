@@ -8,6 +8,7 @@ from .commands import CommandError, redact
 
 
 class Docker:
+    builder = "deployer-builds"
     def __init__(self, settings, runner):
         self.settings, self.runner = settings, runner
 
@@ -27,8 +28,62 @@ class Docker:
         raise RuntimeError(f"Docker inspection failed for {container}; runtime state is unknown: {diagnostic}") from None
 
     def build(self, image, context, log, secrets=()):
-        self.runner.run(["docker", "build", "-t", image, str(context)], log,
+        self.ensure_builder(log)
+        self.runner.run(["docker", "buildx", "build", "--builder", self.builder, "--load",
+                        "--label", "deployer.managed=1", "-t", image, str(context)], log,
             timeout=self.settings.build_timeout, secrets=secrets, description="build image")
+
+    def ensure_builder(self, log):
+        try:
+            self.runner.run(["docker", "buildx", "inspect", self.builder], description="inspect app builder")
+        except CommandError:
+            self.runner.run(["docker", "buildx", "create", "--name", self.builder,
+                             "--driver", "docker-container"], log, description="create isolated app builder")
+
+    def cleanup_build_cache(self, log):
+        # Only the deployer's dedicated cache is affected.
+        self.ensure_builder(log)
+        self.runner.run(["docker", "buildx", "prune", "--builder", self.builder, "--force",
+                         "--all", "--max-used-space", "2GB"], log,
+                        timeout=self.settings.build_timeout, description="bound app build cache")
+
+    def image_id(self, image):
+        text = self.runner.run(["docker", "image", "inspect", "--format", "{{.Id}}", image],
+                               check=False, description="inspect image identity").strip()
+        if text.startswith("sha256:"):
+            return text
+        if "no such image" in text.casefold() or "no such object" in text.casefold():
+            return None
+        raise RuntimeError("Could not determine Docker image identity: " + redact(text)[:1000])
+
+    def remove_unused_image(self, image_id, reference, log):
+        if not self.image_id(image_id):
+            return True
+        used = self.runner.run(["docker", "ps", "-aq", "--filter", f"ancestor={image_id}"],
+                               description="check pulled image usage")
+        if used.strip():
+            return False
+        text = self.runner.run(["docker", "image", "inspect", "--format", "{{json .RepoTags}}", image_id],
+                               description="inspect image tags")
+        tags = json.loads(text) or []
+        owned = {self.canonical_image(ref) for ref in ([reference] if isinstance(reference, str) else reference)}
+        if any(self.canonical_image(tag) not in owned for tag in tags):
+            return False  # Leave tags belonging to other consumers alone.
+        self.runner.run(["docker", "image", "rm", *(tags or [image_id])], log,
+                        description="remove unused pulled image")
+        return True
+
+    @staticmethod
+    def canonical_image(reference):
+        for prefix in ("docker.io/", "index.docker.io/", "registry-1.docker.io/"):
+            if reference.startswith(prefix):
+                reference = reference[len(prefix):]
+                break
+        if reference.startswith("library/"):
+            reference = reference[len("library/"):]
+        if ":" not in reference.rsplit("/", 1)[-1] and "@" not in reference:
+            reference += ":latest"
+        return reference
 
     def pull(self, image, log, auth=None):
         secrets = []
@@ -56,7 +111,7 @@ class Docker:
                             description=f"create network {network}")
 
     def remove_network(self, network, log=None):
-        self.runner.run(["docker", "network", "rm", network], log, check=False,
+        self.runner.run(["docker", "network", "rm", network], log,
                         description=f"remove network {network}")
 
     def ensure_readiness_network(self, network, *, timeout=None):
@@ -87,7 +142,7 @@ class Docker:
         self.runner.run(cmd, log, check=False, description=f"connect container to {network}")
 
     def list_volumes(self, prefix="deployer-data-"):
-        text = self.runner.run(["docker", "volume", "ls", "--format", "{{.Name}}"], check=False,
+        text = self.runner.run(["docker", "volume", "ls", "--format", "{{.Name}}"],
                                description="list volumes")
         names = [line.strip() for line in text.splitlines() if line.strip()]
         if prefix:
@@ -95,14 +150,41 @@ class Docker:
         return names
 
     def remove_volume(self, volume, log=None):
-        self.runner.run(["docker", "volume", "rm", "-f", volume], log, check=False,
-                        description=f"remove volume {volume}")
+        if volume in self.list_volumes(prefix=""):
+            self.runner.run(["docker", "volume", "rm", "-f", volume], log,
+                            description=f"remove volume {volume}")
+
+    def cleanup_images(self, name, log):
+        text = self.runner.run(["docker", "image", "ls", "--filter", f"reference=deployer-{name}:*",
+                                "--format", "{{.Repository}}:{{.Tag}}"], description="list app images")
+        for image in set(text.splitlines()):
+            if not image.startswith(f"deployer-{name}:"):
+                continue
+            used = self.runner.run(["docker", "ps", "-aq", "--filter", f"ancestor={image}"],
+                                   description="check image usage")
+            if not used.strip():
+                self.runner.run(["docker", "image", "rm", image], log, description="remove unused app image")
+
+    def cleanup_managed_images(self, log):
+        self.runner.run(["docker", "image", "prune", "--all", "--force", "--filter", "label=deployer.managed=1"],
+                        log, description="remove unused managed build images")
+
+    def readiness_address(self, container, network, *, timeout=None):
+        text = self.runner.run(["docker", "inspect", "--type", "container", "-f",
+                                "{{json .NetworkSettings.Networks}}", container], timeout=timeout,
+                               description="inspect readiness address")
+        endpoint = json.loads(text).get(network, {})
+        address = endpoint.get("IPAddress") or endpoint.get("GlobalIPv6Address")
+        if not address:
+            raise RuntimeError(f"Container is not connected to readiness network {network}.")
+        return address
 
     def start_candidate(self, container, image, config, log):
         values = parse_env(config.get("env", ""))
         primary_network = config.get("network") or self.settings.network
         self.ensure_network(primary_network, log)
         command = ["docker", "run", "-d", "--name", container, "--network", primary_network,
+                   "--log-driver", "json-file", "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
                    "--network-alias", config["name"],
                    "--label", "deployer.app=" + config["name"]]
         if config.get("stateful") and config.get("mount_path"):
@@ -116,7 +198,7 @@ class Docker:
 
     def remove(self, container, log):
         if self.inspect(container).get("Status") != "missing":
-            self.runner.run(["docker", "rm", "-f", container], log, description="remove container")
+            self.runner.run(["docker", "rm", "-f", "-v", container], log, description="remove container")
 
     def logs(self, container, log, secrets=()):
         self.runner.run(["docker", "logs", "--tail", "100", container], log,

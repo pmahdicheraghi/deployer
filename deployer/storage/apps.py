@@ -96,6 +96,7 @@ class AppStore:
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM apps WHERE name=?", (name,))
             conn.execute("UPDATE jobs SET state='cancelled' WHERE name=? AND state='pending'", (name,))
+            conn.execute("DELETE FROM jobs WHERE name=? AND state IN ('done','failed','cancelled')", (name,))
 
     def installations(self):
         with self.db.transaction() as conn:

@@ -31,7 +31,7 @@ class NetworkStore:
             conn.execute("INSERT INTO networks(name, created_at) VALUES (?, ?)", (name, time.time()))
         return name
 
-    def delete(self, name):
+    def delete(self, name, cleanup=None):
         name = (name or "").strip().lower()
         if name == self.default_network:
             raise ValueError("Cannot delete the default network.")
@@ -43,4 +43,6 @@ class NetworkStore:
                 cfg = json.loads(app_row["config"])
                 if cfg.get("network") == name:
                     raise ValueError(f"Cannot delete network '{name}' because it is in use by app '{cfg.get('name')}'.")
+            if cleanup:
+                cleanup(name)
             conn.execute("DELETE FROM networks WHERE name=?", (name,))

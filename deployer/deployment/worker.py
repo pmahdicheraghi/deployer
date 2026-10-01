@@ -38,6 +38,9 @@ class Worker:
                 # Legacy deployments may have left a pre-swap candidate behind.
                 with self.service.log(app["name"]) as log:
                     self.service.docker.remove(f"deployer-{app['name']}-next", log)
+        with self.service.log("worker") as log:
+            self.service.maintenance(log)
+        self.jobs.db.compact()
 
 
 @contextmanager

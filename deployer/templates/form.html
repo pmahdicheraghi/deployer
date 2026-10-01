@@ -70,7 +70,7 @@
 <div style="margin-top:16px">
 <input type="hidden" name="is_public_present" value="1">
 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
-<input type="checkbox" name="is_public" id="is_public" value="1" style="width:auto;margin:0" onchange="togglePublic()" {{ 'checked' if app.is_public is not defined or app.is_public }}>
+<input type="checkbox" name="is_public" id="is_public" value="1" style="width:auto;margin:0" onchange="this.dataset.userSet='1';togglePublic()" {{ 'checked' if app.is_public is not defined or app.is_public }}>
 Expose with public domain (Nginx + HTTPS)
 </label>
 <small class="mut">Uncheck for internal-only services (e.g. databases) accessible only to other containers on the network.</small>
@@ -92,12 +92,12 @@ Expose with public domain (Nginx + HTTPS)
 <select name="branch" id="branch_select" style="display:none"></select>
 <input name="branch" id="branch_input" value="{{ app.branch or 'main' }}">
 </div>
-<div><label>Container port</label><input name="port" value="{{ app.port or 80 }}" required></div>
+<div><label>Container port</label><input name="port" id="port" value="{{ app.port or 80 }}" oninput="this.dataset.userSet='1'" required></div>
 </div>
 
 <div style="margin-top:16px">
 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
-<input type="checkbox" name="stateful" id="stateful" value="1" style="width:auto;margin:0" onchange="toggleStateful()" {{ 'checked' if app.stateful }}>
+<input type="checkbox" name="stateful" id="stateful" value="1" style="width:auto;margin:0" onchange="this.dataset.userSet='1';toggleStateful()" {{ 'checked' if app.stateful }}>
 Persistent storage (Stateful)
 </label>
 <small class="mut">Attaches a persistent Docker volume (deployer-data-&lt;name&gt;) across redeployments.</small>
@@ -105,8 +105,8 @@ Persistent storage (Stateful)
 
 <div id="stateful_fields" style="margin-top:8px">
 <label>Container mount path</label>
-<input name="mount_path" id="mount_path" value="{{ app.mount_path or '' }}" placeholder="/var/lib/postgresql/data">
-<small class="mut">Directory inside container where data is stored (e.g. /var/lib/postgresql/data for Postgres).</small>
+<input name="mount_path" id="mount_path" value="{{ app.mount_path or '' }}" oninput="this.dataset.userSet='1'" placeholder="/var/lib/postgresql/data">
+<small class="mut">Directory inside container where data is stored. PostgreSQL 16 uses /var/lib/postgresql/data; 18+ uses /var/lib/postgresql. For moving tags or digests, check the image's documented data path.</small>
 </div>
 
 <label style="margin-top:16px">HTTP readiness path <small>(optional; e.g. /health)</small></label>
@@ -190,6 +190,7 @@ function toggleMethod(){
 
   if(m === 'image'){
     if(branchContainer) branchContainer.style.display = 'none';
+    onImageChange();
   } else {
     if(branchContainer) branchContainer.style.display = '';
     if(m === 'manual'){
@@ -299,6 +300,24 @@ function onManualUrlChange(){
 function onImageChange(){
   const val = document.getElementById('image').value.trim();
   suggestName(val);
+  if({{ 'true' if editing else 'false' }}) return;
+  if(document.getElementById('method').value !== 'image') return;
+  if(!/^(?:docker\.io\/)?(?:library\/)?postgres(?::[^@]+)?(?:@sha256:[a-f0-9]+)?$/.test(val)) return;
+  const port = document.getElementById('port');
+  if(!port.dataset.userSet && (!port.value || port.value === '80')) port.value = '5432';
+  const pub = document.getElementById('is_public');
+  if(!pub.dataset.userSet) pub.checked = false;
+  const stateful = document.getElementById('stateful');
+  if(!stateful.dataset.userSet) stateful.checked = true;
+  const mount = document.getElementById('mount_path');
+  if(!mount.dataset.userSet && (!mount.value || mount.dataset.suggested === mount.value)){
+    const version = val.match(/postgres:(\d+)(?:[.\-@]|$)/);
+    const major = version ? parseInt(version[1], 10) : null;
+    mount.value = major === null ? '' : (major >= 18 ? '/var/lib/postgresql' : '/var/lib/postgresql/data');
+    mount.dataset.suggested = mount.value;
+  }
+  togglePublic();
+  toggleStateful();
 }
 
 toggleMethod();

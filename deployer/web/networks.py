@@ -43,8 +43,7 @@ def create():
 @login_required
 def delete(name):
     try:
-        services()["networks"].delete(name)
-        services()["docker"].remove_network(name)
+        services()["networks"].delete(name, cleanup=services()["docker"].remove_network)
         flash(f"Network '{name}' deleted.")
     except (ValueError, RuntimeError) as error:
         flash(str(error))

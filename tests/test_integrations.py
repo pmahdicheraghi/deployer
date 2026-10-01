@@ -236,7 +236,7 @@ def test_private_network_readiness_releases_worker_connection(tmp_path, monkeypa
     connected = set()
     def tcp(address, **kwargs):
         assert "backend" in connected
-        assert address == ("db-candidate", 5432)
+        assert address == ("172.20.0.8", 5432)
         return nullcontext()
     monkeypatch.setattr(socket, "create_connection", tcp)
     class Runner:
@@ -245,6 +245,8 @@ def test_private_network_readiness_releases_worker_connection(tmp_path, monkeypa
                 connected.add(cmd[3])
             elif cmd[1:3] == ["network", "disconnect"]:
                 connected.remove(cmd[3])
+            elif "{{json .NetworkSettings.Networks}}" in cmd and cmd[-1] == "db-candidate":
+                return '{"backend": {"IPAddress": "172.20.0.8"}}'
             elif cmd[-1] == "db-candidate":
                 return json.dumps({"Status": status})
             else:

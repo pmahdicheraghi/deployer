@@ -1,7 +1,14 @@
 name: deployer
 
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   nginx:
+    logging: *bounded-logging
     image: nginx:1.30.5-alpine
     container_name: nginx
     restart: unless-stopped
@@ -15,6 +22,7 @@ services:
     networks: [web]
 
   certbot-renew:
+    logging: *bounded-logging
     image: certbot/certbot:v5.1.0
     restart: unless-stopped
     volumes:
@@ -23,6 +31,7 @@ services:
     entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done'
 
   deployer:
+    logging: *bounded-logging
     build: .
     image: deployer-panel:local
     container_name: deployer
@@ -45,6 +54,7 @@ services:
     networks: [web]
 
   worker:
+    logging: *bounded-logging
     build: .
     image: deployer-panel:local
     command: ["python", "-m", "deployer.deployment.worker"]

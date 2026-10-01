@@ -31,6 +31,49 @@ def csrf(client, path="/apps/demo"):
     return re.search(r'name="csrf_token" value="([^"]+)"', response.text).group(1)
 
 
+@pytest.mark.parametrize("image,user_port,expected_port", [("postgres:16", None, "5432"), ("postgres:16", "5544", "5544"), ("other/postgres:16", None, "80"), ("postgres,postgres:16", None, "5432")])
+def test_new_postgres_image_suggests_service_settings(web, image, user_port, expected_port):
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required to execute form JavaScript")
+    client, services = web
+    page = client.get("/apps/new", base_url="https://deploy.example.com").text
+    function = re.search(r"function onImageChange\(\)\{.*?\n\}", page, re.S).group()
+    harness = "const fields = " + json.dumps({
+        "image": {"value": image}, "port": {"value": user_port or "80", "dataset": {"userSet": "1"} if user_port else {}},
+        "is_public": {"checked": True, "dataset": {}}, "stateful": {"checked": False, "dataset": {}},
+        "mount_path": {"value": "", "dataset": {}}, "method": {"value": "image"}
+    }) + "; const document={getElementById:id=>fields[id]}; function suggestName(){}; function togglePublic(){}; function toggleStateful(){};"
+    run = "for(const image of " + json.dumps(image.split(",")) + "){fields.image.value=image;onImageChange();}console.log(JSON.stringify(fields));"
+    result = subprocess.run([node], input=harness + function + "\n" + run, text=True, capture_output=True, check=True)
+    fields = json.loads(result.stdout)
+    assert fields["port"]["value"] == expected_port
+    if image.endswith("postgres:16") and not image.startswith("other/"):
+        assert fields["is_public"]["checked"] is False
+        assert fields["stateful"]["checked"] is True
+        assert fields["mount_path"]["value"] == "/var/lib/postgresql/data"
+
+
+@pytest.mark.parametrize("image,mount", [("postgres:18-alpine", "/var/lib/postgresql"), ("postgres:alpine", ""), ("postgres@sha256:abcdef", "")])
+def test_postgres_mount_defaults_require_known_version(web, image, mount):
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required to execute form JavaScript")
+    client, services = web
+    page = client.get("/apps/new", base_url="https://deploy.example.com").text
+    function = re.search(r"function onImageChange\(\)\{.*?\n\}", page, re.S).group()
+    fields = {"image": {"value": image}, "method": {"value": "image"}, "port": {"value": "80", "dataset": {}},
+              "is_public": {"checked": True, "dataset": {}}, "stateful": {"checked": False, "dataset": {}},
+              "mount_path": {"value": "", "dataset": {}}}
+    harness = "const fields=" + json.dumps(fields) + ";const document={getElementById:id=>fields[id]};function suggestName(){};function togglePublic(){};function toggleStateful(){};"
+    result = subprocess.run([node], input=harness + function + "\nonImageChange();console.log(JSON.stringify(fields));", text=True, capture_output=True, check=True)
+    assert json.loads(result.stdout)["mount_path"]["value"] == mount
+
+
 @pytest.mark.parametrize("action", ["deploy", "stop", "start", "restart", "delete", "edit"])
 def test_admin_actions_require_csrf_token(web, action):
     client, services = web

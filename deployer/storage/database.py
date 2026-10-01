@@ -25,6 +25,7 @@ class Database:
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA secure_delete=ON")
             conn.execute("PRAGMA synchronous=FULL")
             conn.execute("BEGIN IMMEDIATE")
             yield conn
@@ -34,3 +35,7 @@ class Database:
             raise
         finally:
             conn.close()
+
+    def compact(self):
+        with sqlite3.connect(self.path, timeout=30) as conn:
+            conn.execute("VACUUM")

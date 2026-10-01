@@ -3,7 +3,7 @@ import os
 import re
 import signal
 import subprocess
-import tempfile
+import threading
 from urllib.parse import quote, quote_plus
 
 
@@ -25,40 +25,53 @@ class CommandRunner:
     def run(self, cmd, log=None, *, timeout=None, env=None, secrets=(), description="command", check=True, stdin_text=None):
         if log:
             log.write(f"$ {description}\n"); log.flush()
-        # Output goes to private scratch rather than directly to the deployment log.
-        with tempfile.TemporaryFile() as output:
-            stdin_pipe = subprocess.PIPE if stdin_text is not None else None
-            process = subprocess.Popen(cmd, stdin=stdin_pipe, stdout=output, stderr=subprocess.STDOUT, env=env,
-                start_new_session=os.name != "nt")
-            if stdin_text is not None:
-                try:
-                    process.stdin.write(stdin_text.encode())
-                    process.stdin.close()
-                except (BrokenPipeError, OSError):
-                    pass
-            expired = False
+        # Drain continuously into a bounded tail; verbose builds never fill scratch disk.
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE if stdin_text is not None else None,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, start_new_session=os.name != "nt")
+        captured = bytearray()
+        limit = 2 * 1024 * 1024
+        truncated = False
+        read_errors = []
+        def drain():
+            nonlocal truncated
             try:
-                process.wait(timeout=self.timeout if timeout is None else timeout)
-            except subprocess.TimeoutExpired:
-                expired = True
-                if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                                   capture_output=True, timeout=10, check=False)
-                    if process.poll() is None:
-                        process.kill()
-                else:
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=10)
-            output.seek(0)
-            # Keep only the last 2 MiB of command output in memory and on disk logs.
-            output.seek(0, 2)
-            offset = max(0, output.tell() - 2 * 1024 * 1024)
-            output.seek(offset)
-            captured = output.read()
-            if offset:
-                # Drop the partial first line so truncation cannot expose a token suffix.
-                captured = b"[output truncated]\n" + captured.partition(b"\n")[2]
-            text = redact(captured.decode(errors="replace"), secrets)
+                with process.stdout as output:
+                    while chunk := output.read(65536):
+                        captured.extend(chunk)
+                        if len(captured) > limit:
+                            del captured[:len(captured) - limit]
+                            truncated = True
+            except OSError as error:
+                read_errors.append(error)
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        if stdin_text is not None:
+            try:
+                process.stdin.write(stdin_text.encode())
+            except (BrokenPipeError, OSError):
+                pass
+            finally:
+                process.stdin.close()
+        expired = False
+        try:
+            process.wait(timeout=self.timeout if timeout is None else timeout)
+        except subprocess.TimeoutExpired:
+            expired = True
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                               capture_output=True, timeout=10, check=False)
+                if process.poll() is None:
+                    process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=10)
+        reader.join(timeout=10)
+        if reader.is_alive() or read_errors:
+            raise CommandError(f"{description} output could not be collected.")
+        if truncated:
+            # Drop a partial first line so a token suffix cannot escape redaction.
+            captured = b"[output truncated]\n" + captured.partition(b"\n")[2]
+        text = redact(captured.decode(errors="replace"), secrets)
         if log:
             log.write(text); log.flush()
         if expired:

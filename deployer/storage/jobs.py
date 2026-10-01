@@ -61,11 +61,32 @@ class JobStore:
 
     def finish(self, job_id, state="done", error=""):
         with self.db.transaction() as conn:
-            conn.execute("UPDATE jobs SET state=?,error=? WHERE id=?", (state, error, job_id))
+            conn.execute("UPDATE jobs SET state=?,error=?,payload='{}' WHERE id=?", (state, error, job_id))
+        self.prune_history()
+
+    def prune_history(self, keep=1000):
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE jobs SET payload='{}' WHERE state IN ('done','failed','cancelled')")
+            conn.execute("DELETE FROM jobs WHERE id IN (SELECT id FROM jobs "
+                         "WHERE state IN ('done','failed','cancelled') ORDER BY id DESC LIMIT -1 OFFSET ?)", (keep,))
+
+    def track_image(self, image_id, reference):
+        with self.db.transaction() as conn:
+            conn.execute("INSERT OR IGNORE INTO image_resources VALUES (?, ?)", (image_id, reference))
+
+    def tracked_images(self):
+        with self.db.transaction() as conn:
+            return [dict(row) for row in conn.execute("SELECT * FROM image_resources ORDER BY image_id")]
+
+    def forget_image(self, image_id):
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM image_resources WHERE image_id=?", (image_id,))
 
     def retry(self, job_id):
         with self.db.transaction() as conn:
             row = conn.execute("SELECT name,kind FROM jobs WHERE id=?", (job_id,)).fetchone()
             if row["kind"] == "deploy":
                 conn.execute("UPDATE jobs SET state='cancelled' WHERE name=? AND kind='deploy' AND state='pending'", (row["name"],))
-            conn.execute("UPDATE jobs SET state='pending',stage='queued',payload='{}' WHERE id=?", (job_id,))
+                conn.execute("UPDATE jobs SET state='pending',stage='queued',payload='{}' WHERE id=?", (job_id,))
+            else:
+                conn.execute("UPDATE jobs SET state='pending',stage='queued' WHERE id=?", (job_id,))

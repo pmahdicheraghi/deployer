@@ -36,6 +36,12 @@ class FakeDocker:
     def ensure_readiness_network(self, network, **kwargs): return None
     def release_readiness_network(self, network, worker): pass
     def logs(self, container, log, secrets=()): pass
+    def cleanup_images(self, name, log): pass
+    def readiness_address(self, container, network, **kwargs): return container
+    def cleanup_build_cache(self, log): pass
+    def cleanup_managed_images(self, log): pass
+    def image_id(self, image): return "sha256:test-image"
+    def remove_unused_image(self, image_id, reference, log): return True
 
 
 class FakeGit:
@@ -44,6 +50,7 @@ class FakeGit:
     def cleanup(self, job_id): pass
     def remove(self, name): pass
     def sanitize_remote(self, config): pass
+    def cleanup_orphans(self, live_jobs, live_apps): pass
 
 
 class FakeRouter:

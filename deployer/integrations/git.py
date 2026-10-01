@@ -2,6 +2,7 @@
 import os
 import shutil
 import tempfile
+import stat
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -61,6 +62,8 @@ class GitRepository:
         self.runner.run(prefix + ["reset", "--hard", "FETCH_HEAD"], log, description="checkout revision")
         self.runner.run(prefix + ["clean", "-fdx"], log, description="clean checkout")
         sha = self.runner.run(prefix + ["rev-parse", "HEAD"], description="resolve revision").strip()
+        self.runner.run(prefix + ["reflog", "expire", "--expire=now", "--all"], description="expire checkout history")
+        self.runner.run(prefix + ["gc", "--prune=now"], description="clean checkout objects")
         self.cleanup(job_id)
         def exclude(directory, names):
             return [entry for entry in names if entry == ".git" or entry == ".env" or
@@ -77,7 +80,31 @@ class GitRepository:
         return sha, context
 
     def cleanup(self, job_id):
-        shutil.rmtree(self.directory / "builds" / str(int(job_id)), ignore_errors=True)
+        self._remove_directory("builds", str(int(job_id)))
 
     def remove(self, name):
-        shutil.rmtree(self.directory / "repos" / name, ignore_errors=True)
+        self._remove_directory("repos", name)
+
+    def _remove_directory(self, category, name):
+        parent = (self.directory / category).resolve()
+        candidate = parent / name
+        target = candidate.resolve()
+        if not parent.is_relative_to(self.directory.resolve()) or target != candidate.absolute() or target == parent or not target.is_relative_to(parent):
+            raise ValueError("Cleanup target is outside the managed directory.")
+        def readonly(function, path, error):
+            if not isinstance(error[1], PermissionError):
+                raise error[1]
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            function(path)
+        try:
+            shutil.rmtree(target, onerror=readonly)
+        except FileNotFoundError:
+            pass
+
+    def cleanup_orphans(self, live_jobs, live_apps):
+        for category, retained in (("builds", {str(job) for job in live_jobs}), ("repos", set(live_apps))):
+            parent = self.directory / category
+            if parent.exists():
+                for path in parent.iterdir():
+                    if path.is_dir() and path.name not in retained:
+                        self._remove_directory(category, path.name)
