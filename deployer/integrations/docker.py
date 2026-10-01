@@ -2,7 +2,7 @@
 import json
 
 from .git import parse_env
-from .commands import redact
+from .commands import CommandError, redact
 
 
 class Docker:
@@ -47,9 +47,9 @@ class Docker:
                             timeout=self.settings.build_timeout, description="pull image")
 
     def ensure_network(self, network, log=None):
-        text = self.runner.run(["docker", "network", "inspect", network], check=False,
-                               description="inspect network")
-        if "no such network" in text.casefold() or text.strip() in ("", "[]"):
+        try:
+            self.runner.run(["docker", "network", "inspect", network], description="inspect network")
+        except CommandError:
             self.runner.run(["docker", "network", "create", "--driver", "bridge", network], log,
                             description=f"create network {network}")
 

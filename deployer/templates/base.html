@@ -35,7 +35,6 @@ form.inline{display:inline} code{background:var(--card);padding:1px 5px;border-r
 <a href="/" style="font-weight:400;margin-left:8px">Apps</a>
 <a href="/networks" style="font-weight:400">Networks</a>
 <a href="/volumes" style="font-weight:400">Volumes</a>
-<a href="/apps/new" class="btn" style="padding:4px 10px;font-size:13px">+ New app</a>
 {% endif %}
 </div>
 {% if session.get('auth') %}<form method="post" action="/logout" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn ghost">Log out</button></form>{% endif %}</header>

@@ -237,6 +237,12 @@ def test_deployment_service_docker_image_and_stateful(tmp_path):
     assert "deployer-data-my-pg" in docker.removed_vols
     assert apps.get("my-pg") is None
 
+    # 4. Failed first deployment of stateful app (previous=None) rolls back safely
+    docker.fail_start = True
+    apps.create({**app_cfg, "name": "failed-pg"}, deploy=True)
+    worker.step()
+    assert apps.get("failed-pg")["status"] == "failed"
+
 
 def test_docker_adapter_methods(tmp_path):
     from deployer.config import Settings
@@ -249,7 +255,8 @@ def test_docker_adapter_methods(tmp_path):
             self.commands.append((cmd, kwargs))
             cmd_str = " ".join(cmd)
             if "network inspect" in cmd_str:
-                return "Error: No such network: custom-net"
+                from deployer.integrations.commands import CommandError
+                raise CommandError("Error response from daemon: network custom-net not found")
             if "volume ls" in cmd_str:
                 return "deployer-data-app1\ndeployer-data-app2\nother-vol\n"
             if "inspect" in cmd_str:

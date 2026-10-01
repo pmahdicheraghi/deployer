@@ -111,9 +111,10 @@ class DeploymentService:
             self.router.restore(job.payload["routing"], log)
         if job.payload.get("candidate"):
             self.docker.remove(job.payload["candidate"], log)
-        if job.payload.get("config", {}).get("stateful") and job.payload.get("previous", {}).get("container"):
+        previous = job.payload.get("previous") or {}
+        if job.payload.get("config", {}).get("stateful") and previous.get("container"):
             try:
-                self.docker.action("start", job.payload["previous"]["container"], log)
+                self.docker.action("start", previous["container"], log)
             except Exception:
                 pass
         if job.payload.get("config", {}).get("method") != "image":
