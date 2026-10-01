@@ -21,6 +21,10 @@ Docker socket access is privileged, including the dashboard's inspection connect
 
 The worker fetches and builds before starting a uniquely named candidate. It honors a Docker health check, optionally checks an HTTP readiness path (2xx), or otherwise checks TCP connectivity. TCP alone is not a full application health check.
 
+For internal services on a custom network, the Docker worker temporarily joins that network during readiness checks and disconnects afterward. Failed candidates have their last 100 startup log lines captured before rollback, with configured secrets redacted. Deleting an app clears its deployment log so recreating the same name starts with fresh history; its data volume is retained unless **Delete volume** is selected.
+
+For PostgreSQL 16, use `postgres:16`, internal port `5432`, internal-only visibility, and an environment variable `POSTGRES_PASSWORD` with a strong password. Enable stateful storage with mount path `/var/lib/postgresql/data`. Leave the HTTP health path empty so readiness checks use TCP. A fresh PostgreSQL data volume requires initialization credentials; startup logs show initialization failures.
+
 The old deployment stays running while the candidate becomes ready and Nginx switches. Nginx configuration is written atomically, validated before reload, and the applied route is checked using a deployment marker. Certificate or routing failure restores the saved configuration before removing the candidate. Failed deployment status is shown separately from the active container's runtime status.
 
 Saved configuration and active deployment are separate records. Editing a domain or port does not change the running application. Both active and pending domains are reserved until deployment completes. Lifecycle actions run through the same worker. Delete immediately prevents later deployment requests and cancels pending operations; an in-progress build checks for deletion before starting/switching its candidate.

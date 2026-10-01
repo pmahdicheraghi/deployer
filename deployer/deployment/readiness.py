@@ -5,8 +5,19 @@ import time
 import requests
 
 
-def wait_ready(docker, container, port, *, timeout=30, health_path=""):
+def wait_ready(docker, container, port, *, timeout=30, health_path="", network=None):
     deadline = time.monotonic() + timeout
+    worker = None
+    try:
+        if network:
+            worker = docker.ensure_readiness_network(network, timeout=min(5, timeout))
+        return _wait_ready(docker, container, port, deadline, timeout, health_path)
+    finally:
+        if worker:
+            docker.release_readiness_network(network, worker)
+
+
+def _wait_ready(docker, container, port, deadline, timeout, health_path):
     while time.monotonic() < deadline:
         remaining = max(.001, deadline - time.monotonic())
         state = docker.inspect(container, timeout=min(5, timeout, remaining))

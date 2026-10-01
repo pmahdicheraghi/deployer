@@ -33,6 +33,9 @@ class FakeDocker:
     def connect_network(self, network, container, alias=None, log=None): pass
     def list_volumes(self, prefix="deployer-data-"): return []
     def remove_volume(self, volume, log=None): pass
+    def ensure_readiness_network(self, network, **kwargs): return None
+    def release_readiness_network(self, network, worker): pass
+    def logs(self, container, log, secrets=()): pass
 
 
 class FakeGit:
@@ -246,3 +249,59 @@ def test_claim_freezes_configuration_before_concurrent_edit(system):
     apps.edit("demo", {**config(), "branch":"later"})
     service.execute(job)
     assert apps.get("demo")["active"]["branch"] == "main"
+
+
+def test_delete_then_recreate_does_not_reuse_previous_logs(system):
+    apps, jobs, docker, router, service, worker = system
+    with service.log("demo") as log:
+        log.write("OLD DEPLOYMENT HISTORY\n")
+    jobs.enqueue("demo", "delete")
+    worker.step()
+    apps.create(config(), deploy=True)
+    worker.step()
+    text = (service.settings.data_dir / "logs/demo.log").read_text()
+    assert "OLD DEPLOYMENT HISTORY" not in text
+    assert "Deployment succeeded" in text
+
+
+def test_failed_first_deploy_records_startup_logs_without_claiming_previous(system):
+    apps, jobs, docker, router, service, worker = system
+    jobs.enqueue("demo", "delete")
+    worker.step()
+    apps.create({**config(), "env": "PASSWORD=sensitive-value"}, deploy=True)
+    service.readiness = lambda *args, **kwargs: False
+    def logs(container, log, secrets=()):
+        from deployer.integrations.commands import redact
+        assert container in docker.containers
+        log.write(redact("database initialization failed: sensitive-value\n", secrets))
+    docker.logs = logs
+    worker.step()
+    app = apps.get("demo")
+    assert app["status"] == "failed"
+    assert "previous deployment retained" not in app["error"]
+    text = (service.settings.data_dir / "logs/demo.log").read_text()
+    assert "database initialization failed" in text
+    assert "sensitive-value" not in text
+
+
+def test_internal_readiness_waits_through_initial_container_state(system):
+    apps, jobs, docker, router, service, worker = system
+    docker.containers["starting-db"] = {"Status": "created"}
+    checked = []
+    service.readiness = lambda *args, **kwargs: checked.append(args[1]) or True
+    assert service.ready("starting-db", {"is_public": False, "port": 5432, "network": "backend"})
+    assert checked == ["starting-db"]
+
+
+def test_first_deployment_losing_readiness_during_routing_has_no_previous(system):
+    apps, jobs, docker, router, service, worker = system
+    jobs.enqueue("demo", "delete")
+    worker.step()
+    apps.create(config(), deploy=True)
+    results = iter([True, False])
+    service.readiness = lambda *args, **kwargs: next(results)
+    worker.step()
+    app = apps.get("demo")
+    assert app["status"] == "failed"
+    assert "previous deployment retained" not in app["error"].lower()
+    assert not router.routes

@@ -185,3 +185,71 @@ def test_timed_out_certbot_container_is_removed(tmp_path):
     with pytest.raises(RuntimeError):
         NginxRouter(settings, Runner()).provision("demo.apps.example.com", "candidate", 80, io.StringIO())
     assert commands[-1][:3] == ["docker","rm","-f"]
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_worker_joins_private_network_for_readiness(tmp_path, monkeypatch, attached):
+    import json
+    import socket
+    from deployer.config import Settings
+    from deployer.integrations.docker import Docker
+    monkeypatch.setattr(os.path, "exists", lambda path: True)
+    commands = []
+    class Runner:
+        def run(self, cmd, *args, **kwargs):
+            commands.append(cmd)
+            if "inspect" in cmd:
+                return json.dumps({"backend": {}} if attached else {"web": {}})
+            assert kwargs.get("check", True)
+            return ""
+    docker = Docker(Settings(tmp_path, "apps.example.com", "email", "password", "secret"), Runner())
+    docker.ensure_readiness_network("backend", timeout=2)
+    connects = [cmd for cmd in commands if cmd[1:3] == ["network", "connect"]]
+    assert connects == ([] if attached else [["docker", "network", "connect", "backend", socket.gethostname()]])
+
+
+def test_container_logs_are_bounded_and_redacted(tmp_path):
+    from deployer.config import Settings
+    from deployer.integrations.commands import CommandRunner
+    from deployer.integrations.docker import Docker
+    class Runner(CommandRunner):
+        def run(self, cmd, log=None, **kwargs):
+            assert cmd[:4] == ["docker", "logs", "--tail", "100"]
+            return super().run([sys.executable, "-c", "print('startup error: synthetic-password')"], log, **kwargs)
+    log = io.StringIO()
+    Docker(Settings(tmp_path, "apps.example.com", "email", "password", "secret"), Runner()).logs(
+        "candidate", log, secrets=["synthetic-password"])
+    assert "startup error:" in log.getvalue()
+    assert "synthetic-password" not in log.getvalue()
+
+
+@pytest.mark.parametrize("status,expected", [("running", True), ("exited", False)])
+def test_private_network_readiness_releases_worker_connection(tmp_path, monkeypatch, status, expected):
+    import json
+    import socket
+    from contextlib import nullcontext
+    from deployer.config import Settings
+    from deployer.deployment.readiness import wait_ready
+    from deployer.integrations.docker import Docker
+    exists = os.path.exists
+    monkeypatch.setattr(os.path, "exists", lambda path: path == "/.dockerenv" or exists(path))
+    connected = set()
+    def tcp(address, **kwargs):
+        assert "backend" in connected
+        assert address == ("db-candidate", 5432)
+        return nullcontext()
+    monkeypatch.setattr(socket, "create_connection", tcp)
+    class Runner:
+        def run(self, cmd, *args, **kwargs):
+            if cmd[1:3] == ["network", "connect"]:
+                connected.add(cmd[3])
+            elif cmd[1:3] == ["network", "disconnect"]:
+                connected.remove(cmd[3])
+            elif cmd[-1] == "db-candidate":
+                return json.dumps({"Status": status})
+            else:
+                return '{"web": {}}'
+            return ""
+    docker = Docker(Settings(tmp_path, "apps.example.com", "email", "password", "secret"), Runner())
+    assert wait_ready(docker, "db-candidate", 5432, network="backend", timeout=1) is expected
+    assert not connected

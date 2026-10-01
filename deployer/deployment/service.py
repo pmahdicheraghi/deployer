@@ -70,7 +70,10 @@ class DeploymentService:
             self.docker.remove(candidate, log)
             self.docker.start_candidate(candidate, image, config, log)
             if not self.ready(candidate, config):
-                raise RuntimeError("Replacement failed readiness; previous deployment retained.")
+                message = "Deployment failed readiness; see candidate startup logs."
+                if previous:
+                    message += " Previous deployment retained."
+                raise RuntimeError(message)
             self.docker.restart_policy(candidate, log)
             self._check_not_deleted(job.name)
             if config.get("is_public", True) and config.get("domain"):
@@ -80,7 +83,10 @@ class DeploymentService:
                 self.jobs.progress(job.id, "switching", payload)
                 self.router.provision(config["domain"], candidate, config["port"], log)
                 if not self.ready(candidate, config):
-                    raise RuntimeError("Replacement lost readiness during routing; previous deployment retained.")
+                    message = "Deployment lost readiness during routing; see candidate startup logs."
+                    if previous:
+                        message += " Previous deployment retained."
+                    raise RuntimeError(message)
             else:
                 self.jobs.progress(job.id, "switching", payload)
             self._check_not_deleted(job.name)
@@ -97,6 +103,11 @@ class DeploymentService:
                 # The new deployment is authoritative. Recovery retries cleanup only.
                 log.write("New deployment active; cleanup will resume on worker restart.\n")
                 raise
+            if current.stage in {"starting", "switching"}:
+                try:
+                    self.docker.logs(candidate, log, secrets=values)
+                except Exception as diagnostic_error:
+                    log.write(f"Could not capture candidate logs: {redact(str(diagnostic_error), values)}\n")
             self.rollback(current, log)
             message = redact(str(error), values)
             log.write(f"FAILED: {message}\n"); log.flush()
@@ -132,19 +143,20 @@ class DeploymentService:
                 self.docker.remove(previous["container"], log)
 
     def ready(self, container, config):
+        network = self.settings.network if config.get("is_public", True) else (config.get("network") or self.settings.network)
         if not config.get("is_public", True):
+            if config.get("port"):
+                return self.readiness(self.docker, container, config["port"],
+                    timeout=self.settings.readiness_timeout, health_path=config.get("health_path", ""), network=network)
             state = self.docker.inspect(container, timeout=5)
             health = state.get("Health", {}).get("Status")
             if health == "unhealthy" or state.get("Status") not in {"running"}:
                 return False
             if health == "healthy":
                 return True
-            if config.get("port"):
-                return self.readiness(self.docker, container, config["port"],
-                    timeout=self.settings.readiness_timeout, health_path=config.get("health_path", ""))
             return state.get("Status") == "running"
         return self.readiness(self.docker, container, config["port"],
-            timeout=self.settings.readiness_timeout, health_path=config.get("health_path", ""))
+            timeout=self.settings.readiness_timeout, health_path=config.get("health_path", ""), network=network)
 
     def lifecycle(self, job, log):
         app = self.apps.get(job.name)
@@ -165,6 +177,11 @@ class DeploymentService:
                 self.repository.remove(job.name)
             if job.payload.get("delete_volume"):
                 self.docker.remove_volume(f"deployer-data-{job.name}", log)
+            # Clear only after external cleanup succeeds, before releasing the app name.
+            # Truncating the open file also works on Windows and is safe on retry.
+            log.flush()
+            log.seek(0)
+            log.truncate(0)
             self.apps.remove(job.name)
         elif active:
             self.docker.action(job.kind, active["container"], log)

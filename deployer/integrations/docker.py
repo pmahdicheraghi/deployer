@@ -1,5 +1,7 @@
 """Docker operations; secrets are passed without logging argument lists."""
 import json
+import os
+import socket
 
 from .git import parse_env
 from .commands import CommandError, redact
@@ -57,6 +59,26 @@ class Docker:
         self.runner.run(["docker", "network", "rm", network], log, check=False,
                         description=f"remove network {network}")
 
+    def ensure_readiness_network(self, network, *, timeout=None):
+        """Temporarily join the probe worker to a service's private bridge."""
+        if not os.path.exists("/.dockerenv"):
+            return None  # Host-based development uses its existing network access.
+        worker = socket.gethostname()
+        text = self.runner.run(["docker", "inspect", "--type", "container", "-f",
+                                "{{json .NetworkSettings.Networks}}", worker],
+                               timeout=timeout, description="inspect worker networks")
+        networks = json.loads(text)
+        if network in networks:
+            return None
+        self.runner.run(["docker", "network", "connect", network, worker],
+                        timeout=timeout, description="connect readiness worker")
+        return worker
+
+    def release_readiness_network(self, network, worker):
+        if worker:
+            self.runner.run(["docker", "network", "disconnect", network, worker],
+                            description="disconnect readiness worker")
+
     def connect_network(self, network, container, alias=None, log=None):
         cmd = ["docker", "network", "connect"]
         if alias:
@@ -95,6 +117,10 @@ class Docker:
     def remove(self, container, log):
         if self.inspect(container).get("Status") != "missing":
             self.runner.run(["docker", "rm", "-f", container], log, description="remove container")
+
+    def logs(self, container, log, secrets=()):
+        self.runner.run(["docker", "logs", "--tail", "100", container], log,
+                        timeout=5, secrets=secrets, check=False, description="candidate startup logs")
 
     def restart_policy(self, container, log):
         self.runner.run(["docker", "update", "--restart", "unless-stopped", container], log,
