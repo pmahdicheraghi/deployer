@@ -7,6 +7,7 @@ def create_app(settings=None, *, dependencies=None):
     from .storage.database import Database
     from .storage.apps import AppStore
     from .storage.jobs import JobStore
+    from .storage.networks import NetworkStore
     from .integrations.commands import CommandRunner
     from .integrations.github import GitHub
     from .integrations.git import GitRepository
@@ -14,7 +15,7 @@ def create_app(settings=None, *, dependencies=None):
     from .integrations.nginx import NginxRouter
     from .deployment.service import DeploymentService
     from .deployment.worker import Worker
-    from .web import auth, apps, github, webhooks
+    from .web import auth, apps, github, webhooks, networks, volumes
 
     settings = settings or Settings.from_env()
     overrides = dependencies or {}
@@ -26,6 +27,7 @@ def create_app(settings=None, *, dependencies=None):
         application.config["TRUSTED_HOSTS"] = [settings.panel_domain]
     database = Database(settings.data_dir, settings.base_domain)
     app_store, job_store = AppStore(database), JobStore(database)
+    network_store = overrides.get("networks") or NetworkStore(database, settings.network)
     runner = overrides.get("runner") or CommandRunner(settings.command_timeout)
     github_client = overrides.get("github") or GitHub(settings)
     repository = overrides.get("repository") or GitRepository(settings.data_dir, runner, github_client)
@@ -33,9 +35,9 @@ def create_app(settings=None, *, dependencies=None):
     router = overrides.get("router") or NginxRouter(settings, runner)
     service = DeploymentService(settings, app_store, job_store, repository, docker, router)
     application.extensions["deployer"] = dict(settings=settings, apps=app_store, jobs=job_store,
-        github=github_client, runner=runner, repository=repository, docker=docker, router=router,
+        networks=network_store, github=github_client, runner=runner, repository=repository, docker=docker, router=router,
         service=service, worker=Worker(service, app_store, job_store))
-    for blueprint in (auth.bp, apps.bp, github.bp, webhooks.bp):
+    for blueprint in (auth.bp, apps.bp, github.bp, webhooks.bp, networks.bp, volumes.bp):
         application.register_blueprint(blueprint)
     auth.install_csrf(application)
     return application

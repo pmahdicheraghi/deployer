@@ -14,10 +14,12 @@ def migrate(conn, directory, base_domain=""):
         "CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, "
         "kind TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', stage TEXT NOT NULL DEFAULT 'queued', "
         "payload TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS networks (name TEXT PRIMARY KEY, created_at REAL NOT NULL)",
         "CREATE UNIQUE INDEX IF NOT EXISTS pending_deploy ON jobs(name) "
         "WHERE kind='deploy' AND state='pending'",
     ):
         conn.execute(statement)
+    conn.execute("INSERT OR IGNORE INTO networks(name, created_at) VALUES ('web', ?)", (time.time(),))
     if conn.execute("SELECT value FROM metadata WHERE key='legacy_import'").fetchone():
         return
     legacy = directory / "state.json"

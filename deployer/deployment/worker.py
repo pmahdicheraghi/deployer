@@ -29,7 +29,8 @@ class Worker:
         for job in self.jobs.list("running"):
             self.service.recover_job(job)
         for app in self.apps.list():
-            self.service.repository.sanitize_remote(app)
+            if app.get("method") != "image":
+                self.service.repository.sanitize_remote(app)
             if app["active"]:
                 state = self.service.docker.inspect(app["active"]["container"]).get("Status", "missing")
                 if app["status"] not in {"failed", "recovering"}:

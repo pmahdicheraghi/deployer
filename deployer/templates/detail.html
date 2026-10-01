@@ -9,17 +9,36 @@
 <form method="post" action="/apps/{{ app.name }}/start" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn ghost">Start</button></form>
 {% endif %}
 <a class="btn ghost" href="/apps/{{ app.name }}/edit">Edit</a>
-<form method="post" action="/apps/{{ app.name }}/delete" class="inline" onsubmit="return confirm('Delete {{ app.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn danger">Delete</button></form>
+<form method="post" action="/apps/{{ app.name }}/delete" class="inline" id="del_form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="delete_volume" id="del_vol_input" value="0">
+<button class="btn danger" type="button" onclick="confirmDelete()">Delete</button>
+</form>
 </div></div>
 <div class="card" style="margin-top:16px">
+{% if app.is_public is defined and not app.is_public %}
+<p><b>Access:</b> <span class="badge">Internal Service</span> <span class="mut">(No public URL)</span></p>
+<p><b>Internal Hostname:</b> <code>{{ app.name }}</code> &nbsp;|&nbsp; <b>Port:</b> <code>{{ app.port }}</code> &nbsp;|&nbsp; <b>Network:</b> <a href="/networks"><code>{{ app.network or 'web' }}</code></a></p>
+<small class="mut">Connect from other containers on <code>{{ app.network or 'web' }}</code> using host <code>{{ app.name }}</code> and port <code>{{ app.port }}</code>.</small>
+{% else %}
 <p><b>URL:</b> <a href="https://{{ app.active_domain }}" target="_blank" rel="noopener">https://{{ app.active_domain }}</a></p>
 {% if app.active and app.domain != app.active_domain %}<p class="mut">Saved domain: {{ app.domain }}. Deploy to apply; the current route remains active.</p>{% endif %}
+<p><b>Network:</b> <a href="/networks"><code>{{ app.network or 'web' }}</code></a></p>
+{% endif %}
+
 {% if app.active %}<p><b>Active container:</b> {{ app.runtime }}</p>{% endif %}
 {% if app.error %}<p class="flash">{{ app.error }}</p>{% endif %}
-{% if app.custom_domain %}
+{% if app.custom_domain and (app.is_public is not defined or app.is_public) %}
 <p><small class="mut">DNS setup: Point an <b>A</b> record to this server's IP, or a <b>CNAME</b> record to <code>{{ app.subdomain or app.name }}.{{ base_domain }}</code>.</small></p>
 {% endif %}
-{% if app.method == 'github_app' %}
+
+{% if app.stateful %}
+<p><b>Persistent Volume:</b> <code>deployer-data-{{ app.name }}</code> &rarr; <code>{{ app.mount_path }}</code> (<a href="/volumes">view in Volumes</a>)</p>
+{% endif %}
+
+{% if app.method == 'image' %}
+<p><b>Docker Image:</b> <code>{{ app.image }}</code></p>
+{% elif app.method == 'github_app' %}
 <p><b>Repo:</b> {{ app.repo_full_name }} <span class="mut">({{ app.branch }})</span> — via connected GitHub account</p>
 <p><small>Deploys automatically on every push to <code>{{ app.branch }}</code>. No webhook setup needed — it's handled by the GitHub App.</small></p>
 {% else %}
@@ -30,6 +49,18 @@
 {% else %}GitLab → Settings → Webhooks: paste the secret as "Secret token", enable "Push events".{% endif %}</small>
 {% endif %}
 </div>
+
+<script>
+function confirmDelete(){
+  const hasVolume = {{ 'true' if app.stateful else 'false' }};
+  if(!confirm('Delete {{ app.name }}?')) return;
+  if(hasVolume){
+    const alsoVol = confirm('Also permanently delete persistent volume deployer-data-{{ app.name }}?\n\nOK = Delete volume (Data destroyed)\nCancel = Keep volume (Preserve data)');
+    document.getElementById('del_vol_input').value = alsoVol ? '1' : '0';
+  }
+  document.getElementById('del_form').submit();
+}
+</script>
 
 <div class="card" id="stats_card" style="display:none;margin-top:16px">
 <div style="font-weight:600;margin-bottom:12px">Resource Usage</div>

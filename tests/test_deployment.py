@@ -27,6 +27,12 @@ class FakeDocker:
     def restart_policy(self, name, log): pass
     def action(self, operation, name, log):
         self.containers[name]["Status"] = "exited" if operation == "stop" else "running"
+    def pull(self, image, log, auth=None): pass
+    def ensure_network(self, network, log=None): pass
+    def remove_network(self, network, log=None): pass
+    def connect_network(self, network, container, alias=None, log=None): pass
+    def list_volumes(self, prefix="deployer-data-"): return []
+    def remove_volume(self, volume, log=None): pass
 
 
 class FakeGit:

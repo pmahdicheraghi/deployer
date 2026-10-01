@@ -9,7 +9,7 @@ class JobStore:
     def __init__(self, db):
         self.db = db
 
-    def enqueue(self, name, kind):
+    def enqueue(self, name, kind, payload=None):
         if kind not in {"deploy", "delete", "stop", "start", "restart"}:
             raise ValueError("Unknown operation.")
         with self.db.transaction() as conn:
@@ -23,7 +23,8 @@ class JobStore:
                 pending = conn.execute("SELECT id FROM jobs WHERE name=? AND kind='deploy' AND state='pending'", (name,)).fetchone()
                 if pending:
                     return pending["id"]
-            return conn.execute("INSERT INTO jobs(name,kind,created_at) VALUES (?,?,?)", (name, kind, time.time())).lastrowid
+            return conn.execute("INSERT INTO jobs(name,kind,payload,created_at) VALUES (?,?,?,?)",
+                                (name, kind, json.dumps(payload or {}), time.time())).lastrowid
 
     def claim(self):
         with self.db.transaction() as conn:

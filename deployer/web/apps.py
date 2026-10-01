@@ -26,7 +26,7 @@ def presentation(app):
     jobs = [job for job in services()["jobs"].list() if job.name == app["name"] and job.state in {"pending", "running"}]
     status = "deleting" if app["delete_requested"] else ("deploying" if any(j.kind == "deploy" and j.state == "running" for j in jobs)
         else "queued" if jobs else "failed" if app["status"] == "failed" else runtime if active else "new")
-    return {**app, "live": status, "runtime": runtime, "active_domain": active["domain"] if active else app["domain"],
+    return {**app, "live": status, "runtime": runtime, "active_domain": active.get("domain", "") if active else app.get("domain", ""),
             "sha": active.get("sha", "") if active else "", "deployed_at": active.get("deployed_at", 0) if active else 0}
 
 
@@ -39,8 +39,10 @@ def index():
 
 def form_context(app, editing):
     settings = services()["settings"]
+    networks = services()["networks"].list()
     return dict(app=app, editing=editing, base_domain=settings.base_domain,
-                gh_enabled=settings.github_enabled, installations=services()["apps"].installations())
+                gh_enabled=settings.github_enabled, installations=services()["apps"].installations(),
+                networks=networks, default_network=settings.network)
 
 
 @bp.route("/apps/new", methods=["GET", "POST"])
@@ -56,7 +58,8 @@ def new():
         return redirect(url_for("apps.detail", name=config["name"]))
     settings = services()["settings"]
     return render_template("form.html", **form_context(dict(port=80, provider="github",
-        method="github_app" if settings.github_enabled else "manual", installation_id=request.args.get("installation_id", "")), False))
+        method="github_app" if settings.github_enabled else "manual", is_public=True, network=settings.network,
+        installation_id=request.args.get("installation_id", "")), False))
 
 
 @bp.route("/apps/<name>/edit", methods=["GET", "POST"])
@@ -92,8 +95,11 @@ def action(name, operation):
     get_app(name)
     if operation not in {"deploy", "stop", "start", "restart", "delete"}:
         abort(404)
+    payload = {}
+    if operation == "delete":
+        payload["delete_volume"] = request.form.get("delete_volume") in ("1", "true", "True", "on")
     try:
-        services()["jobs"].enqueue(name, operation)
+        services()["jobs"].enqueue(name, operation, payload=payload)
     except ValueError as error:
         abort(409, str(error))
     flash(f"{operation.capitalize()} queued.")

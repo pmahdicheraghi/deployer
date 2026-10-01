@@ -1,0 +1,52 @@
+{% extends "base.html" %}{% block body %}
+<div class="bar">
+<h2>Networks</h2>
+</div>
+
+<div class="card" style="margin-top:16px">
+<b>Create Network</b>
+<form method="post" action="/networks/new" style="margin-top:12px;display:flex;gap:12px;align-items:flex-end">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div style="flex:1">
+<label for="net_name" style="margin-top:0">Network Name</label>
+<input id="net_name" name="name" placeholder="backend-net" required pattern="[a-z0-9][a-z0-9-]*">
+</div>
+<button class="btn" style="flex:none;height:38px">Create Network</button>
+</form>
+<small class="mut">Bridge network for inter-container communication. Containers on the same network can reach each other via their app name.</small>
+</div>
+
+<div class="card">
+<table>
+<thead><tr><th>Network Name</th><th>Connected Apps</th><th style="text-align:right">Action</th></tr></thead>
+<tbody>
+{% for net in networks %}
+<tr>
+<td><b>{{ net.name }}</b> {% if net.is_default %}<span class="badge">default</span>{% endif %}</td>
+<td>
+{% if net.apps %}
+{% for app in net.apps %}
+<a href="/apps/{{ app }}"><code>{{ app }}</code></a>{% if not loop.last %}, {% endif %}
+{% endfor %}
+{% else %}
+<span class="mut">None</span>
+{% endif %}
+</td>
+<td style="text-align:right">
+{% if not net.is_default and not net.apps %}
+<form method="post" action="/networks/{{ net.name }}/delete" class="inline" onsubmit="return confirm('Delete network {{ net.name }}?')">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<button class="btn danger" style="padding:4px 8px;font-size:12px">Delete</button>
+</form>
+{% elif net.is_default %}
+<small class="mut">system default</small>
+{% else %}
+<small class="mut">in use</small>
+{% endif %}
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endblock %}

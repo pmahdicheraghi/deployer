@@ -22,13 +22,20 @@ class CommandRunner:
     def __init__(self, timeout=60):
         self.timeout = timeout
 
-    def run(self, cmd, log=None, *, timeout=None, env=None, secrets=(), description="command", check=True):
+    def run(self, cmd, log=None, *, timeout=None, env=None, secrets=(), description="command", check=True, stdin_text=None):
         if log:
             log.write(f"$ {description}\n"); log.flush()
         # Output goes to private scratch rather than directly to the deployment log.
         with tempfile.TemporaryFile() as output:
-            process = subprocess.Popen(cmd, stdout=output, stderr=subprocess.STDOUT, env=env,
+            stdin_pipe = subprocess.PIPE if stdin_text is not None else None
+            process = subprocess.Popen(cmd, stdin=stdin_pipe, stdout=output, stderr=subprocess.STDOUT, env=env,
                 start_new_session=os.name != "nt")
+            if stdin_text is not None:
+                try:
+                    process.stdin.write(stdin_text.encode())
+                    process.stdin.close()
+                except (BrokenPipeError, OSError):
+                    pass
             expired = False
             try:
                 process.wait(timeout=self.timeout if timeout is None else timeout)

@@ -11,6 +11,8 @@ def decode(row):
 
 
 def domains(config):
+    if not config.get("is_public", True) or not config.get("domain"):
+        return set()
     reserved = {config["domain"]}
     base = config.get("base_domain")
     sub = config.get("subdomain", config["name"])
@@ -36,10 +38,12 @@ class AppStore:
     @staticmethod
     def _reserve(conn, name, config):
         requested = domains(config)
+        if not requested:
+            return
         for row in conn.execute("SELECT * FROM apps WHERE name<>?", (name,)):
             other = decode(row)
             occupied = domains(other)
-            if other["active"]:
+            if other["active"] and other["active"].get("domain"):
                 occupied.add(other["active"]["domain"])
             if requested & occupied:
                 raise ValueError("That domain or subdomain is already reserved.")

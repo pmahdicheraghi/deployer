@@ -15,15 +15,14 @@
 {% endif %}
 
 <form method="post" class="card" id="appform"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-{% if gh_enabled and installations %}
 <label>Source</label>
 <select name="method" id="method" onchange="toggleMethod()">
-<option value="github_app" {{ 'selected' if app.method != 'manual' }}>GitHub (connected account)</option>
-<option value="manual" {{ 'selected' if app.method == 'manual' }}>Manual repository URL</option>
-</select>
-{% else %}
-<input type="hidden" name="method" id="method" value="manual">
+{% if gh_enabled and installations %}
+<option value="github_app" {{ 'selected' if app.method == 'github_app' }}>GitHub (connected account)</option>
 {% endif %}
+<option value="manual" {{ 'selected' if app.method == 'manual' }}>Manual repository URL</option>
+<option value="image" {{ 'selected' if app.method == 'image' }}>Docker image (e.g. Docker Hub)</option>
+</select>
 
 <div id="gh_fields">
 <label>GitHub account</label>
@@ -49,27 +48,74 @@
 <input type="password" name="token" autocomplete="new-password">
 </div>
 
+<div id="image_fields">
+<label>Docker image reference</label>
+<input name="image" id="image" value="{{ app.image or '' }}" placeholder="postgres:16, redis:alpine, etc." oninput="onImageChange()">
+<label>Registry username <small>(optional; private registries only)</small></label>
+<input name="registry_user" value="{{ app.registry_user or '' }}" placeholder="username">
+<label>Registry password / token <small>(optional{{ '; leave blank to keep current' if editing }})</small></label>
+<input type="password" name="registry_password" autocomplete="new-password">
+</div>
+
 {% if not editing %}<label style="margin-top:16px">Name</label><input name="name" id="name" value="{{ app.name or '' }}" placeholder="myapp" required>{% endif %}
 
+<label style="margin-top:16px">Network</label>
+<select name="network" id="network">
+{% for net in networks %}
+<option value="{{ net.name }}" {{ 'selected' if (app.network == net.name) or (not app.network and net.name == default_network) }}>{{ net.name }}{{ ' (default)' if net.name == default_network else '' }}</option>
+{% endfor %}
+</select>
+<small class="mut">Containers on the same network reach each other using their app name as hostname.</small>
+
+<div style="margin-top:16px">
+<input type="hidden" name="is_public_present" value="1">
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+<input type="checkbox" name="is_public" id="is_public" value="1" style="width:auto;margin:0" onchange="togglePublic()" {{ 'checked' if app.is_public is not defined or app.is_public }}>
+Expose with public domain (Nginx + HTTPS)
+</label>
+<small class="mut">Uncheck for internal-only services (e.g. databases) accessible only to other containers on the network.</small>
+</div>
+
+<div id="public_domain_fields">
 <label style="margin-top:16px">Subdomain</label>
 <div class="row" style="align-items:center">
-<div><input name="subdomain" id="subdomain" value="{{ app.subdomain or '' }}" placeholder="myapp" required pattern="[a-z0-9][a-z0-9-]*"></div>
+<div><input name="subdomain" id="subdomain" value="{{ app.subdomain or '' }}" placeholder="myapp" pattern="[a-z0-9][a-z0-9-]*"></div>
 <div style="flex:none;padding-top:8px">.{{ base_domain }}</div>
 </div>
 
 <label style="margin-top:16px">Custom domain <small>(optional, e.g. example.com)</small></label>
 <input name="custom_domain" id="custom_domain" value="{{ app.custom_domain or '' }}" placeholder="example.com">
+</div>
 
-<div class="row" style="margin-top:8px"><div><label>Branch</label>
+<div class="row" style="margin-top:8px">
+<div id="branch_container"><label>Branch</label>
 <select name="branch" id="branch_select" style="display:none"></select>
 <input name="branch" id="branch_input" value="{{ app.branch or 'main' }}">
 </div>
-<div><label>Container port</label><input name="port" value="{{ app.port or 80 }}" required></div></div>
-<label>HTTP readiness path <small>(optional; e.g. /health)</small></label>
+<div><label>Container port</label><input name="port" value="{{ app.port or 80 }}" required></div>
+</div>
+
+<div style="margin-top:16px">
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+<input type="checkbox" name="stateful" id="stateful" value="1" style="width:auto;margin:0" onchange="toggleStateful()" {{ 'checked' if app.stateful }}>
+Persistent storage (Stateful)
+</label>
+<small class="mut">Attaches a persistent Docker volume (deployer-data-&lt;name&gt;) across redeployments.</small>
+</div>
+
+<div id="stateful_fields" style="margin-top:8px">
+<label>Container mount path</label>
+<input name="mount_path" id="mount_path" value="{{ app.mount_path or '' }}" placeholder="/var/lib/postgresql/data">
+<small class="mut">Directory inside container where data is stored (e.g. /var/lib/postgresql/data for Postgres).</small>
+</div>
+
+<label style="margin-top:16px">HTTP readiness path <small>(optional; e.g. /health)</small></label>
 <input name="health_path" value="{{ app.health_path or '' }}" placeholder="/health">
 <small>Docker health checks are honored. Without a health check or HTTP path, readiness checks the container port.</small>
-<label>Environment variables <small>(KEY=value, one per line)</small></label>
+
+<label style="margin-top:16px">Environment variables <small>(KEY=value, one per line)</small></label>
 <textarea name="env" rows="5">{{ app.env or '' }}</textarea>
+
 <p><button class="btn">{{ 'Save' if editing else 'Create & deploy' }}</button>
 <a class="btn ghost" href="/">Cancel</a></p></form>
 
@@ -81,9 +127,9 @@ function sanitizeName(s){
   return s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30).replace(/-+$/, '');
 }
 
-function suggestName(repo){
-  if(!repo) return;
-  const raw = repo.split('/').pop().replace(/\.git$/, '');
+function suggestName(rawText){
+  if(!rawText) return;
+  const raw = rawText.split('/').pop().replace(/\.git$/, '').split(':')[0];
   const clean = sanitizeName(raw);
   if(!clean) return;
   const nameEl = document.getElementById('name');
@@ -100,6 +146,7 @@ function suggestName(repo){
 function showBranchInput(){
   const inp = document.getElementById('branch_input');
   const sel = document.getElementById('branch_select');
+  if(!inp || !sel) return;
   inp.style.display = '';
   inp.disabled = false;
   sel.style.display = 'none';
@@ -109,28 +156,57 @@ function showBranchInput(){
 function showBranchSelect(){
   const inp = document.getElementById('branch_input');
   const sel = document.getElementById('branch_select');
+  if(!inp || !sel) return;
   inp.style.display = 'none';
   inp.disabled = true;
   sel.style.display = '';
   sel.disabled = false;
 }
 
+function togglePublic(){
+  const isPub = document.getElementById('is_public').checked;
+  document.getElementById('public_domain_fields').style.display = isPub ? '' : 'none';
+  const sub = document.getElementById('subdomain');
+  if(sub) sub.required = isPub;
+}
+
+function toggleStateful(){
+  const isSt = document.getElementById('stateful').checked;
+  document.getElementById('stateful_fields').style.display = isSt ? '' : 'none';
+  const mp = document.getElementById('mount_path');
+  if(mp) mp.required = isSt;
+}
+
 function toggleMethod(){
   const m = document.getElementById('method') ? document.getElementById('method').value : 'manual';
-  document.getElementById('gh_fields').style.display = m === 'github_app' ? '' : 'none';
-  document.getElementById('manual_fields').style.display = m === 'manual' ? '' : 'none';
-  if(m === 'manual'){
-    showBranchInput();
+  const gh = document.getElementById('gh_fields');
+  const manual = document.getElementById('manual_fields');
+  const img = document.getElementById('image_fields');
+  const branchContainer = document.getElementById('branch_container');
+
+  if(gh) gh.style.display = (m === 'github_app') ? '' : 'none';
+  if(manual) manual.style.display = (m === 'manual') ? '' : 'none';
+  if(img) img.style.display = (m === 'image') ? '' : 'none';
+
+  if(m === 'image'){
+    if(branchContainer) branchContainer.style.display = 'none';
   } else {
-    onRepoChange();
+    if(branchContainer) branchContainer.style.display = '';
+    if(m === 'manual'){
+      showBranchInput();
+    } else {
+      onRepoChange();
+    }
   }
 }
 
 async function loadRepos(){
-  const id = document.getElementById('installation_id').value;
+  const idEl = document.getElementById('installation_id');
+  if(!idEl) return;
+  const id = idEl.value;
   const sel = document.getElementById('repo_full_name');
   if(!id){
-    sel.innerHTML = '<option value="">Select an account first…</option>';
+    sel.innerHTML = '<option value="">Select an account…</option>';
     reposData = [];
     showBranchInput();
     return;
@@ -159,8 +235,11 @@ async function loadRepos(){
 }
 
 async function onRepoChange(){
-  const repo = document.getElementById('repo_full_name').value;
-  const id = document.getElementById('installation_id').value;
+  const repoEl = document.getElementById('repo_full_name');
+  const idEl = document.getElementById('installation_id');
+  if(!repoEl || !idEl) return;
+  const repo = repoEl.value;
+  const id = idEl.value;
   if(!repo || !id){
     showBranchInput();
     return;
@@ -217,7 +296,14 @@ function onManualUrlChange(){
   suggestName(val);
 }
 
+function onImageChange(){
+  const val = document.getElementById('image').value.trim();
+  suggestName(val);
+}
+
 toggleMethod();
+togglePublic();
+toggleStateful();
 const initialId = document.getElementById('installation_id') ? document.getElementById('installation_id').value : '';
 if(initialId){ loadRepos(); }
 </script>

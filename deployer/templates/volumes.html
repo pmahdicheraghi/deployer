@@ -1,0 +1,45 @@
+{% extends "base.html" %}{% block body %}
+<div class="bar">
+<h2>Volumes</h2>
+</div>
+
+<div class="card" style="margin-top:16px">
+<table>
+<thead><tr><th>Volume Name</th><th>App</th><th>Status</th><th>Mount Path</th><th style="text-align:right">Action</th></tr></thead>
+<tbody>
+{% for vol in volumes %}
+<tr>
+<td><code>{{ vol.name }}</code></td>
+<td>
+{% if vol.app_exists %}
+<a href="/apps/{{ vol.app_name }}"><b>{{ vol.app_name }}</b></a>
+{% else %}
+<span class="mut">{{ vol.app_name }} (deleted)</span>
+{% endif %}
+</td>
+<td>
+{% if vol.is_attached %}
+<span class="badge running">Attached</span>
+{% else %}
+<span class="badge failed">Orphaned</span>
+{% endif %}
+</td>
+<td><small>{{ vol.mount_path or '-' }}</small></td>
+<td style="text-align:right">
+{% if not vol.is_attached %}
+<form method="post" action="/volumes/{{ vol.name }}/delete" class="inline" onsubmit="return confirm('Permanently delete volume {{ vol.name }}? Data will be lost!')">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<button class="btn danger" style="padding:4px 8px;font-size:12px">Delete</button>
+</form>
+{% else %}
+<small class="mut">in use</small>
+{% endif %}
+</td>
+</tr>
+{% else %}
+<tr><td colspan="5" style="text-align:center;padding:24px" class="mut">No persistent volumes created yet.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endblock %}

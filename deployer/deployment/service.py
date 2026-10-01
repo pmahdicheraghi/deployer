@@ -50,33 +50,47 @@ class DeploymentService:
         self.jobs.progress(job.id, "preparing", payload)
         self.apps.status(job.name, "deploying")
         values = [config.get("token", ""), *parse_env(config.get("env", "")).values()]
+        is_image = config.get("method") == "image"
+        if is_image and config.get("registry_password"):
+            values.append(config["registry_password"])
         try:
-            sha, context = self.repository.prepare(config, job.id, log)
-            image = f"deployer-{job.name}:{sha}"
-            self.docker.build(image, context, log, secrets=values)
+            if is_image:
+                auth = {"user": config.get("registry_user", ""), "password": config.get("registry_password", "")} if config.get("registry_password") else None
+                image = config["image"]
+                self.docker.pull(image, log, auth=auth)
+                sha = image.split(":")[-1] if ":" in image else "latest"
+            else:
+                sha, context = self.repository.prepare(config, job.id, log)
+                image = f"deployer-{job.name}:{sha}"
+                self.docker.build(image, context, log, secrets=values)
             self._check_not_deleted(job.name)
             self.jobs.progress(job.id, "starting", payload)
+            if config.get("stateful") and previous and previous.get("container"):
+                self.docker.action("stop", previous["container"], log)
             self.docker.remove(candidate, log)
             self.docker.start_candidate(candidate, image, config, log)
-            if not self.readiness(self.docker, candidate, config["port"],
-                timeout=self.settings.readiness_timeout, health_path=config.get("health_path", "")):
+            if not self.ready(candidate, config):
                 raise RuntimeError("Replacement failed readiness; previous deployment retained.")
             self.docker.restart_policy(candidate, log)
             self._check_not_deleted(job.name)
-            domains = [config["domain"], previous["domain"] if previous else ""]
-            payload["routing"] = self.router.snapshot(domains)
-            # Record rollback data BEFORE provision can overwrite a file or reload nginx.
-            self.jobs.progress(job.id, "switching", payload)
-            self.router.provision(config["domain"], candidate, config["port"], log)
-            if not self.ready(candidate, config):
-                raise RuntimeError("Replacement lost readiness during routing; previous deployment retained.")
+            if config.get("is_public", True) and config.get("domain"):
+                domains = [config["domain"], previous["domain"] if previous and previous.get("domain") else ""]
+                payload["routing"] = self.router.snapshot(domains)
+                # Record rollback data BEFORE provision can overwrite a file or reload nginx.
+                self.jobs.progress(job.id, "switching", payload)
+                self.router.provision(config["domain"], candidate, config["port"], log)
+                if not self.ready(candidate, config):
+                    raise RuntimeError("Replacement lost readiness during routing; previous deployment retained.")
+            else:
+                self.jobs.progress(job.id, "switching", payload)
             self._check_not_deleted(job.name)
             active = {**config, "container": candidate, "sha": sha, "deployed_at": int(time.time())}
             self.apps.activate(job.name, active, job.id)
             self.cleanup_committed(payload, log)
             self.jobs.finish(job.id)
             log.write(f"Deployment succeeded: {sha}\n"); log.flush()
-            self.repository.cleanup(job.id)
+            if not is_image:
+                self.repository.cleanup(job.id)
         except Exception as error:
             current = self.jobs.get(job.id)
             if current.stage == "committed":
@@ -97,7 +111,13 @@ class DeploymentService:
             self.router.restore(job.payload["routing"], log)
         if job.payload.get("candidate"):
             self.docker.remove(job.payload["candidate"], log)
-        self.repository.cleanup(job.id)
+        if job.payload.get("config", {}).get("stateful") and job.payload.get("previous", {}).get("container"):
+            try:
+                self.docker.action("start", job.payload["previous"]["container"], log)
+            except Exception:
+                pass
+        if job.payload.get("config", {}).get("method") != "image":
+            self.repository.cleanup(job.id)
 
     def cleanup_committed(self, payload, log):
         if not self.ready(payload["candidate"], payload["config"]):
@@ -105,12 +125,23 @@ class DeploymentService:
         previous = payload.get("previous")
         config = payload["config"]
         if previous:
-            if previous["domain"] != config["domain"]:
+            if previous.get("domain") and previous["domain"] != config.get("domain"):
                 self.router.remove(previous["domain"], log)
-            if previous["container"] != payload["candidate"]:
+            if previous.get("container") and previous["container"] != payload["candidate"]:
                 self.docker.remove(previous["container"], log)
 
     def ready(self, container, config):
+        if not config.get("is_public", True):
+            state = self.docker.inspect(container, timeout=5)
+            health = state.get("Health", {}).get("Status")
+            if health == "unhealthy" or state.get("Status") not in {"running"}:
+                return False
+            if health == "healthy":
+                return True
+            if config.get("port"):
+                return self.readiness(self.docker, container, config["port"],
+                    timeout=self.settings.readiness_timeout, health_path=config.get("health_path", ""))
+            return state.get("Status") == "running"
         return self.readiness(self.docker, container, config["port"],
             timeout=self.settings.readiness_timeout, health_path=config.get("health_path", ""))
 
@@ -122,12 +153,17 @@ class DeploymentService:
         active = app["active"]
         if job.kind == "delete":
             if active:
-                self.router.remove(active["domain"], log)
-                self.docker.remove(active["container"], log)
+                if active.get("domain"):
+                    self.router.remove(active["domain"], log)
+                if active.get("container"):
+                    self.docker.remove(active["container"], log)
             # Legacy containers without a successfully deployed record can still exist.
             self.docker.remove(f"deployer-{job.name}-next", log)
             self.docker.remove(f"deployer-{job.name}", log)
-            self.repository.remove(job.name)
+            if app.get("method") != "image":
+                self.repository.remove(job.name)
+            if job.payload.get("delete_volume"):
+                self.docker.remove_volume(f"deployer-data-{job.name}", log)
             self.apps.remove(job.name)
         elif active:
             self.docker.action(job.kind, active["container"], log)
